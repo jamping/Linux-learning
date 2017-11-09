@@ -9,8 +9,8 @@ function eth_bond()
 		NETMASK=`ifconfig eth0 |egrep "HWaddr|Bcast" |tr "\n" " "|awk '{print $5,$7,$NF}'|sed -e 's/addr://g' -e 's/Mask://g'|awk '{print $3}'`
 		GATEWAY=`route -n|grep "UG"|awk '{print $2}'`
 	)
-cat >ifcfg-bond0<<EOF
-DEVICE=bond0
+cat >ifcfg-$1<<EOF
+DEVICE=$1
 BOOTPROTO=static
 ${NETWORK[1]}
 ${NETWORK[2]}
@@ -21,4 +21,5 @@ NM_CONTROLLED=no
 EOF
 }
 
-eth_bond
+read -p "Please input the name of network you want: " n;  
+eth_bond $n
