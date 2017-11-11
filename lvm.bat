@@ -16,15 +16,19 @@ mdadm -C /dev/md5 -ayes -l5 -n4 -x1 /dev/sd[b,c,d,e,f]
 写入RAID配置文件/etc/mdadm.conf保存信息
 echo DEVICE /dev/sd{b,c,d,e,f} >> /etc/mdadm.conf
 mdadm –Ds >> /etc/mdadm.conf
-4、创建PV
+4、格式化
+fdisk /dev/md5 (文件类型选8e lvm格式)
+partprobe    (这一步很重要！强制让核心重新捉一次 partition table)
+fdisk -l
+5、创建PV
 pvcreate /dev/md5 
 pvdisplay 查看PV
-5、VG扩容
+6、VG扩容
 vgextend cl /dev/md5 （cl为原来VG）
 vgdisplay
-6、LV扩容
+7、LV扩容
 lvdisplay
-lvextend -l 1534 /dev/cl/root (1534为Free PE值,/dev/cl/root为需要扩容的LV卷)
+lvextend -l +1534 /dev/cl/root (1534为Free PE值,/dev/cl/root为需要扩容的LV卷)
 查看磁盘 df -Th，这时没有变化，需要对文件系统扩容
 resize2fs /dev/cl/root (ext文件系统)
 xfs_growfs /dev/cl/root (xfs文件系统)
