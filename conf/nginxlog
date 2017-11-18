@@ -1,0 +1,11 @@
+/var/log/nginx/*.log {
+	compress
+	notifempty
+	daily
+	rotate 90
+	create
+	sharedscripts
+	postrotate
+        	/etc/init.d/nginx reload > /dev/null 2>/dev/null || true
+	endscript
+}
