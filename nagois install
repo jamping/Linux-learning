@@ -95,3 +95,33 @@ cd into the db/ directory and either:
 ./upgradedb (for an existing one) 
 
 ./installdb -u ndodb -p passwd -h localhost -d ndodb;
+
+10）NDOUtils config
+cd /tmp/ndoutils-2.1.3/config
+cp ndo* /usr/local/nagios/etc
+cd /usr/local/nagios/etc
+mv ndo2db.cfg-sample ndo2db.cfg
+mv ndomod.cfg-sample ndomod.cfg
+
+modify the infomations of the db_name db_user db_pass 
+vi ndo2db.cfg
+
+vi /usr/local/nagios/etc/nagios.cfg
+find the broker_module pos,add the follows:
+broker_module=/usr/local/nagios/bin/ndomod.o config_file=/usr/local/nagios/etc/ndomod.cfg
+
+start the ndo2db:
+su - nagios
+/usr/local/nagios/bin/ndo2db -c /usr/local/nagios/etc/ndo2db.cfg 
+
+view the result:
+ ps -ef |grep ndo
+ ls -latr /usr/local/nagios/var/ndo.sock 
+
+add the item of the start for ndo2db
+echo '/usr/local/nagios/bin/ndo2db -c /usr/local/nagios/etc/ndo2db.cfg' >> /etc/rc.local
+
+cd /tmp/ndoutils-2.1.3/startup
+cp default-service /usr/lib/systemd/system/ndo2db.service
+
+11)install centreon
