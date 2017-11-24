@@ -1,0 +1,77 @@
+Installation from sources of the zabbix 
+
+1 Requirements
+yum -y install gcc* make php php-gd php-mysql php-bcmath php-mbstring php-xml curl curl-devel net-snmp  net-snmp-devel perl-DBI httpd mariadb* mysql-devel libxml2-devel curl-devel unixODBC-devel net-snmp-devel OpenIPMI-devel vim 
+
+2 Download the source archive
+wget http://sourceforge.net/projects/zabbix/files/ZABBIX%20Latest%20Stable/3.4.4/zabbix-3.4.4.tar.gz
+tar -zxvf zabbix-3.4.4.tar.gz
+
+3 Start complie 
+cd zabbix-3.2.4
+./configure --prefix=/usr/local/zabbix --enable-server --enable-agent --enable-ipv6 --with-mysql --with-net-snmp --with-libcurl --with-libxml2 --with-openipmi --with-unixodbc
+make install 
+
+4 Create user account
+groupadd zabbix
+useradd zabbix -s /sbin/nologin -M -g zabbix
+
+5 Create database
+systemctl start mariadb
+systemctl enable mariadb
+
+set the root  passwd and clear test database
+mysql_secure_installation
+
+mysql -uroot -p
+create database zabbix character set utf8 collate utf8_bin; 
+grant all privileges on zabbix.* to zabbix@'localhost' identified by 'wbgsnmm';
+flush privileges;
+
+mysql -uzabbix -pzabbix zabbix < database/mysql/schema.sql
+mysql -uzabbix -pzabbix zabbix < database/mysql/images.sql
+mysql -uzabbix -pzabbix zabbix < database/mysql/data.sql
+
+6 modify the php.ini
+vim /etc/php.ini 
+
+date.timezone= Asia/Shanghai
+max_execution_time = 300
+post_max_size = 32M
+memory_limit = 128M
+mbstring.func_overload = 1
+max_input_time = 300
+
+7 config the web
+cp -r ./frontends/php/  /var/www/html/zabbix
+chown -R apache.apache /var/www/html/zabbix/
+
+cp misc/init.d/fedora/core/zabbix_* 　　/etc/init.d/
+
+修改服务器端启动文件,将BASEDIR=/usr/local/替换为BASEDIR=/usr/local/zabbix（以之前编译的位置为准)
+vi /etc/init.d/zabbix_server
+
+修改客户器端启动文件,将BASEDIR=/usr/local/替换为BASEDIR=/usr/local/zabbix（以之前编译的位置为准)
+vi /etc/init.d/zabbix_agentd
+
+chkconfig --add zabbix_server
+chkconfig --add zabbix_agentd
+chkconfig zabbix_server on
+chkconfig zabbix_agentd on
+
+view the configurations
+more /usr/local/zabbix/etc/zabbix_agentd.conf | grep -v ^$ | grep -v ^#
+more /usr/local/zabbix/etc/zabbix_server.conf| grep -v ^# | grep -v ^$
+
+firewall-cmd --add-service=http --permanent
+firewall-cmd --reload
+
+systemctl enable httpd
+systemctl start httpd
+
+systemctl start zabbix_server
+systemctl start zabbix_agentd
+
+firewall-cmd --permanent --add-port=10051/tcp
+firewall-cmd --permanent --add-port=10050/tcp
+firewall-cmd --reload
