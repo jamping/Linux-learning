@@ -75,3 +75,23 @@ systemctl start zabbix_agentd
 firewall-cmd --permanent --add-port=10051/tcp
 firewall-cmd --permanent --add-port=10050/tcp
 firewall-cmd --reload
+
+8 client intallation
+groupadd zabbix
+useradd zabbix -s /sbin/nologin -M -g zabbix
+
+wget http://sourceforge.net/projects/zabbix/files/ZABBIX%20Latest%20Stable/3.4.4/zabbix-3.4.4.tar.gz
+tar -zxvf zabbix-3.4.4.tar.gz
+
+cd zabbix-3.2.4
+./configure  --enable-agent
+make install 
+
+cp misc/init.d/fedora/core/zabbix_* 　　/etc/init.d/
+chkconfig --add zabbix_agentd
+chkconfig zabbix_agentd on
+
+vi /usr/local/etc/zabbix_agentd.conf
+modify the Server=IP
+
+
