@@ -66,10 +66,6 @@ wget https://sourceforge.net/projects/nagios/files/ndoutils-2.x/ndoutils-2.1.3/n
 # tar -zxvf ndoutils-2.1.3.tar.gz
 # cd ndoutils-2.1.3/
 
-# vi include/config.h
-#include
-#include
-
 # ./configure CFLAGS=-fPIC
 
 # make all
@@ -85,7 +81,7 @@ set the root  passwd and clear test database
 mysql_secure_installation
 
 mysql -uroot -p
-create database ndodb;
+create database ndodb DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci;
 grant all privileges on ndodb.* to ndodb@'localhost' identified by 'wbgsnmm';
 flush privileges;
 
@@ -126,8 +122,6 @@ cp default-service /usr/lib/systemd/system/ndo2db.service
 
 11)install centreon
 
-yum install sudo tofrodos bsd-mailx lsb-release mysql-server libmysqlclient18 libdatetime-perl php5 php5-mysql php-pear php5-intl php5-ldap php5-snmp php5-gd php5-sqlite rrdtool librrds-perl libconfig-inifiles-perl libcrypt-des-perl libdigest-hmac-perl libdigest-sha-perl libgd-perl snmp snmpd libnet-snmp-perl libsnmp-perl nagios-plugins
-
 rrdtool、perl-snmp、perl-rrdtool
 
 run to check it:
@@ -136,6 +130,42 @@ perl -MRRDs -le 'print q(ok!)'
 failed,install the follows:
 yun install -y rrdtool perl-snmp perl-rrdtool
 
-yum install libdatetime-perl php-pear php5-intl php5-ldap php5-snmp php5-gd php5-sqlite rrdtool librrds-perl libconfig-inifiles-perl libcrypt-des-perl libdigest-hmac-perl libdigest-sha-perl libgd-perl snmp snmpd libnet-snmp-perl libsnmp-perl 
+upgrade PEAR
+wget http://pear.php.net/go-pear.phar
+php go-pear.phar
 
 pear list
+
+Archive_Tar
+Auth_SASL
+Console_Getopt
+DB
+DB_DataObject
+DB_DataObject_FormBuilder
+Date
+HTML_Common
+HTML_QuickForm
+HTML_QuickForm_advmultiselect
+HTML_Table
+HTML_Request
+Image_GraphViz
+Log
+MDB2
+Mail
+Math_BigInteger
+Net_IDME
+Net_IDNA
+Net_Ping
+Net_SMTP
+Net_Socket
+Net_Traceroute
+Net_URL
+Numbers_Words
+PEAR
+PHPUnit
+PHP_Compat
+SOAP
+Structures_Graph
+Validate
+XML_RPC
+XML_Util
