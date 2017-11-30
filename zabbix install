@@ -8,7 +8,7 @@ wget http://sourceforge.net/projects/zabbix/files/ZABBIX%20Latest%20Stable/3.4.4
 tar -zxvf zabbix-3.4.4.tar.gz
 
 3 Start complie 
-cd zabbix-3.2.4
+cd zabbix-3.4.4
 ./configure --prefix=/usr/local/zabbix --enable-server --enable-agent --enable-ipv6 --with-mysql --with-net-snmp --with-libcurl --with-libxml2 --with-openipmi --with-unixodbc
 make install 
 
@@ -76,7 +76,7 @@ firewall-cmd --permanent --add-port=10051/tcp
 firewall-cmd --permanent --add-port=10050/tcp
 firewall-cmd --reload
 
-8 client intallation
+8 linux client installation
 groupadd zabbix
 useradd zabbix -s /sbin/nologin -M -g zabbix
 
@@ -87,11 +87,85 @@ cd zabbix-3.2.4
 ./configure  --enable-agent
 make install 
 
-cp misc/init.d/fedora/core/zabbix_* 　　/etc/init.d/
+cp misc/init.d/fedora/core/zabbix_*  /etc/init.d/
 chkconfig --add zabbix_agentd
 chkconfig zabbix_agentd on
 
 vi /usr/local/etc/zabbix_agentd.conf
 modify the Server=IP
 
+vi /etc/sysconfig/iptables
 
+-A INPUT -m state --state NEW -m udp -p udp --dport 10050 -j ACCEPT 
+-A INPUT -m state --state NEW -m udp -p udp --dport 10051 -j ACCEPT
+-A INPUT -m state --state NEW -m tcp -p tcp --dport 10050 -j ACCEPT
+-A INPUT -m state --state NEW -m tcp -p tcp --dport 10051 -j ACCEPT
+
+service iptables restart
+service zabbix_agentd start
+
+9 windows client installation
+
+uncompress zabbix_agents_3.4.0.win.zip
+
+copy the bin directory of the os version and conf to c:\zabbix
+
+copy bin\win64\*  forexmple:
+zabbix_agentd.ext
+zabbix_get.ext
+zabbix_sender.exe
+dev/*
+
+zabbix_agentd.win.conf
+
+modify the server info of the zabbix_agentd.win.conf
+EnableRemoteCommands=1
+LogRemoteCommands=1
+
+note: hostname is same to the server web
+
+and, run DOS by administrator
+
+cd c:\zabbix
+zabbix_agentd.exe -i -c ./zabbix_agentd.win.conf
+zabbix_agentd.exe -s -c ./zabbix_agentd.win.conf
+
+10 监控mysql服务器性能
+
+1) 在配置文件zabbix_agentd.conf里面添加mysql监控信息：
+vim /etc/zabbix/zabbix_agentd.conf
+
+ Include=/usr/local/zabbix/etc/zabbix_agentd.conf.d/*.conf
+ UnsafeUserParameters=1
+
+2) 添加一个mysql帐号：
+
+mysql -u root -p
+mysql>GRANT USAGE ON *.* TO 'zabbix'@'127.0.0.1' IDENTIFIED BY 'zabbixWbgsnmm1@#';                             
+mysql> FLUSH PRIVILEGES;
+mysql> quit
+
+3) copy the file of configure
+
+cp conf/zabbix_agentd/userparameter_mysql.conf /usr/local/etc/zabbix_agentd.conf.d/
+cd /usr/local/etc/zabbix_agentd.conf.d/
+sed -i 's#/var/lib/zabbix#/usr/local/etc#g' userparameter_mysql.conf
+
+4) edit the file:.my.cnf
+cd /usr/local/etc
+
+cat > .my.cnf <<MYCONF
+# zabbix angentd
+[mysql]
+host=127.0.0.1
+user=zabbix
+password=zabbixWbgsnmm1@#
+
+[mysqladmin]
+host=127.0.0.1
+user=zabbix
+password=zabbixWbgsnmm1@#
+MYCONF
+
+5) zabbix服务器上面检查mysql服务器信息是否能正常获取到:
+zabbix_get -s 127.0.0.1 -p10050 -k "system.cpu.load[all,avg15]";         //127.0.0. 1 与zabbix_agentd.conf 中 server一致        

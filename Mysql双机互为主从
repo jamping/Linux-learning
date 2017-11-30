@@ -1,0 +1,122 @@
+一.Mysql复制配置双机互为主从 AB为两台Mysql服务器，均开启二进制日志，数据库版本Mysql5.6
+
+在两台服务器上编辑配置文件，以下配置添加到/usr/local/server/mysql/my.cnf
+
+A服务器[21.114.11.58] 
+server-id = 1
+binlog-do-db = cmstop
+binlog-ignore-db = mysql
+replicate-do-db = cmstop
+replicate-ignore-db = mysql
+sync-binlog = 1
+
+B服务器[21.114.11.90]
+server-id = 2
+binlog-do-db = cmstop
+binlog-ignore-db = mysql
+replicate-do-db = cmstop
+replicate-ignore-db = mysql
+sync-binlog = 1
+
+二、操作步骤
+
+# A B 服务器停止同步
+STOP SLAVE;
+
+# A B 服务器清空MASTER日志
+RESET MASTER;
+
+# A B 服务器清空SLAVE日志
+RESET SLAVE;   
+
+# A 服务器授权同步账户 (我们会同步一次复制数据库文件，所以授权为21.114.11.%)
+GRANT REPLICATION SLAVE ON *.* TO 'master_slave'@'21.114.11.%' IDENTIFIED BY 'master_slave123!@#';
+FLUSH PRIVILEGES;
+
+# A 服务器锁表（锁表状态下不能终止mysql进程，否则会失败）
+FLUSH TABLES WITH READ LOCK;
+
+#如果使用SSH，需要重新开启，复制数据库文件,需要修改auto.cnf中的uuids值，不能相同
+tar -cvf /tmp/mysql-data.tar /data/mysql/
+tar -xvf /tmp/mysql-data.tar -C /
+
+# 查看 A 服务器主机状态（记录二进制开始文件，位置）
+SHOW MASTER STATUS\G
+
+# B 服务器锁表（锁表状态下不能终止mysql进程，否则会失败）
+FLUSH TABLES WITH READ LOCK;
+
+# 修改 B 服务器配置 (修改为A服务器的主机状态,注：MASTER_LOG_FILE,MASTER_LOG_POS两个值查看A)
+CHANGE MASTER TO MASTER_HOST='21.114.11.58',MASTER_USER='master_slave', MASTER_PASSWORD='master_slave123!@#',MASTER_LOG_FILE='binlog.000001',MASTER_LOG_POS=1108;
+
+# 开启 B 服务器同步进程
+START SLAVE;
+# 查看 B 服务器同步状态是否正常
+SHOW SLAVE STATUS\G
+
+# 查看 B 服务器主机（记录二进制开始文件，位置）
+SHOW MASTER STATUS\G
+
+# B 服务器授权同步账户 (我们会同步一次复制数据库文件，所以授权为21.114.11.%)
+GRANT REPLICATION SLAVE ON *.* TO 'master_slave'@'21.114.11.%' IDENTIFIED BY 'master_slave123!@#';
+FLUSH PRIVILEGES;
+
+# 修改 A 服务器配置 (修改为B服务器的主机状态)   
+CHANGE MASTER TO MASTER_HOST='21.114.11.90',MASTER_USER='master_slave',MASTER_PASSWORD='master_slave123!@#',MASTER_LOG_FILE='binlog.000005',MASTER_LOG_POS=573;
+
+# 开启 A 服务器同步进程
+START SLAVE;
+
+# 分别查看 A B 服务器同步状态，确定是否成功 
+SHOW SLAVE STATUS\G
+
+# 解锁 A B 服务器
+START SLAVE;UNLOCK TABLES;
+
+# 数据测试分别在 A B 服务器上创建表插入数据测试
+DROP TABLE IF EXISTS `test`;CREATE TABLE `test` (`id` int(11) NOT NULL AUTO_INCREMENT,`value` varchar(100) DEFAULT '0',PRIMARY KEY (`id`)) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;INSERT INTO `test` VALUES ('2', 'Hello2’);
+
+注意：
+
+1. 数据库目录下的master.info 
+
+的内容会覆盖命令行或my.cnf中指定的部分选项，更改配置需删除master.info 
+
+
+2. my.cnf中的master配置在MySQL 6.0以后会取消，官方建议使用动态的CHANGE MASTER
+
+3. 如果只指定ignore-db而不指定do-db。则新创建数据库的操作也会同步。
+互为同步配置实例：
+
+1. A B 互为主从同步test, 不同步mysql：两个数据库配置中均设置：binlog-do-db=test, binlog-ignore-db=mysql，replicate-do-db=test，replicate-ignore-db=mysql
+
+2. A B 互为主从只同步test，不同步其他数据库，新创建的也不会同步两个数据库配置中均设置：binlog-do-db=test，replicate-do-db=test
+
+3. A B 互为主从不同步mysql, 同步其他数据库，譬如创建的新数据库也会同步两个数据库配置中均设置：binlog-ignore-db=mysql，replicate-ignore-db=mysql
+
+4. A B 互为主从同步所有数据库，包括新建的数据库
+两个数据库配置中均不设置上述四项。
+
+三、从数据库配置
+配置文件：
+
+db_slaves.php
+
+
+配置说明：
+
+从数据库配置文件以二维数组形式配置，查询数据时系统随机选择一个服务器配置。请自行做好主从数据同步。
+
+return array(
+            array(
+                        'driver' => 'mysql',                             //数据库驱动类型
+                        'host' => '21.114.11.90',                        //从数据库服务器1
+                        'port' => 3306,                                  //数据库服务器端口
+                        'username' => 'cmstop',                          //数据库帐号
+                        'password' => '**********************',          //数据库密码
+                        'dbname' => 'cmstop',                            //数据库名称
+                        'prefix' => 'cmstop_',                           //数据表前缀
+                        'pconnect' => 0,                                 //是否持久连接
+                        'charset' => 'utf8'                              //数据编码
+            ),
+);
