@@ -1,0 +1,56 @@
+1. 系统需求
+被监控服务器上安装 zabbix-agent, php, php-mysql
+
+2. 安装配置 percona-zabbix-templates
+
+ wget https://www.percona.com/downloads/percona-monitoring-plugins/percona-monitoring-plugins-1.1.7/binary/redhat/7/x86_64/percona-zabbix-templates-1.1.7-2.noarch.rpm
+
+rpm -ivh percona-zabbix-templates-1.1.7-2.noarch.rpm
+
+3. 配置 Agent 上的 MySQL 连接
+
+cp /var/lib/zabbix/percona/templates/userparameter_percona_mysql.conf /usr/local/etc/zabbix_agentd.conf.d/userparameter_percona_mysql.conf
+
+service zabbix_agentd restart
+
+cat >  /var/lib/zabbix/percona/scripts/ss_get_mysql_stats.php.cnf <<PERCONA
+<?php
+\$mysql_user = 'root';
+\$mysql_pass = 'wbgsnmm';
+?>
+PERCONA
+
+# 测试脚本
+/var/lib/zabbix/percona/scripts/get_mysql_stats_wrapper.sh gg
+
+cat > ~zabbix/.my.cnf <<MYCNF
+[client]
+user = zabbix
+password = zabbixWbgsnmm1@#
+MYCNF
+
+# zabbix 用户测试脚本
+sudo -u zabbix -H /var/lib/zabbix/percona/scripts/get_mysql_stats_wrapper.sh running-slave
+
+4. 配置 Zabbix Server
+
+通过 Zabbix Web 界面 (Configuration -> Templates -> Import) 导入 XML 模板，注意要另外选择上 Screens.
+配置主机关联上 Percona MySQL Server Template 模板。
+
+5. 遇到的问题
+
+不出图
+zabbix_get 能获取数据，但是不出图。
+[root@linux-node1 ~]# zabbix_get -s 192.168.56.11 -k "MySQL.max-connections"
+
+# 查看状态文件权限，为之前测试脚本时的 root 权限，zabbix 用户并不能读写，所以获取不到数据
+[root@linux-node1 ~]# ll /tmp/localhost-mysql_cacti_stats.txt 
+-rw-r--r-- 1 root root 1374 Jun 22 11:33 /tmp/localhost-mysql_cacti_stats.txt
+
+# 删除 root 用户测试时生成的 mysql 状态文件
+[root@linux-node1 ~]# rm -f  /tmp/localhost-mysql_cacti_stats.txt 
+# 会自动生成 zabbix 用户权限的 mysql 状态文件
+[root@linux-node1 ~]# ll  /tmp/localhost-mysql_cacti_stats.txt 
+-rw-rw-r-- 1 zabbix zabbix 1374 Jun 22 11:41 /tmp/localhost-mysql_cacti_stats.txt
+# 过一会儿就可以看到出图了
+

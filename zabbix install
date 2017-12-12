@@ -1,7 +1,7 @@
 Installation from sources of the zabbix 
 
 1 Requirements
-yum -y install gcc* make php php-gd php-mysql php-bcmath php-mbstring php-xml curl curl-devel net-snmp  net-snmp-devel perl-DBI httpd mariadb* mysql-devel libxml2-devel curl-devel unixODBC-devel net-snmp-devel OpenIPMI-devel vim 
+yum -y install gcc* make php php-gd php-mysql php-bcmath php-mbstring php-xml php-ldap curl curl-devel net-snmp  net-snmp-devel perl-DBI httpd mariadb* mysql-devel libxml2-devel curl-devel unixODBC-devel net-snmp-devel OpenIPMI-devel vim libevent-devel
 
 2 Download the source archive
 wget http://sourceforge.net/projects/zabbix/files/ZABBIX%20Latest%20Stable/3.4.4/zabbix-3.4.4.tar.gz
@@ -25,12 +25,12 @@ mysql_secure_installation
 
 mysql -uroot -p
 create database zabbix character set utf8 collate utf8_bin; 
-grant all privileges on zabbix.* to zabbix@'localhost' identified by 'wbgsnmm';
+grant all privileges on zabbix.* to zabbix@'localhost' identified by 'zabbixWbgsnmm1@#';
 flush privileges;
 
-mysql -uzabbix -pzabbix zabbix < database/mysql/schema.sql
-mysql -uzabbix -pzabbix zabbix < database/mysql/images.sql
-mysql -uzabbix -pzabbix zabbix < database/mysql/data.sql
+mysql -uzabbix -pzabbixWbgsnmm1@# zabbix < database/mysql/schema.sql
+mysql -uzabbix -pzabbixWbgsnmm1@# zabbix < database/mysql/images.sql
+mysql -uzabbix -pzabbixWbgsnmm1@# zabbix < database/mysql/data.sql
 
 6 modify the php.ini
 vim /etc/php.ini 
@@ -141,7 +141,7 @@ vim /etc/zabbix/zabbix_agentd.conf
 2) 添加一个mysql帐号：
 
 mysql -u root -p
-mysql>GRANT USAGE ON *.* TO 'zabbix'@'127.0.0.1' IDENTIFIED BY 'zabbixWbgsnmm1@#';                             
+mysql>GRANT USAGE ON *.* TO 'zabbix_agentd'@'127.0.0.1' IDENTIFIED BY 'zabbixWbgsnmm1@#';                             
 mysql> FLUSH PRIVILEGES;
 mysql> quit
 

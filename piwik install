@@ -1,0 +1,32 @@
+Installation from sources of the piwik
+
+1  Requirements
+
+rpm -Uvh https://mirror.webtatic.com/yum/el7/webtatic-release.rpm
+
+yum -y install gcc* make php71w php71w-mysql php71w-gd libjpeg* php71w-ldap php71w-odbc php71w-pear php71w-xml php71w-xmlrpc php71w-mbstring php71w-bcmath php71w curl curl-devel net-snmp  net-snmp-devel perl-DBI httpd mariadb* mysql-devel libxml2-devel  unixODBC-devel net-snmp-devel OpenIPMI-devel vim  htop unzip libevent-devel
+
+2 Download the source archive
+
+wget http://piwik.org/latest.zip && unzip piwik.zip
+
+3 configure the mariadb
+
+vi /etc/my.cnf
+
+[mysqld]
+datadir=/data/mysql
+socket=/data/mysql/mysql.sock
+
+chown -R mysql.mysql /data/mysql
+
+systemctl start mariadb
+systemctl enable mariadb
+
+set the root  passwd and clear test database
+mysql_secure_installation
+
+mysql -uroot -p
+create database piwik character set utf8 collate utf8_bin; 
+grant all privileges on piwik.* to piwik@'localhost' identified by 'piwikWbgsnmm1@#';
+flush privileges;
