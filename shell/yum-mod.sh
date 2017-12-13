@@ -54,18 +54,13 @@ grep 5.77.39.20     /etc/hosts > /dev/null 2>&1 || echo "5.77.39.20 pear.php.net
 # rpm --import http://mirrors.sohu.com/centos/RPM-GPG-KEY-CentOS-5
 # curl -o /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Centos-6.repo
 # curl -o /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Centos-7.repo 
-[ -f "$YUM/CentOS${release}-Base-163.repo" ] && mv $YUM/CentOS${release}-Base-163.repo.$(date +%F_%T)
-[ "$1" == "" ] && curl http://mirrors.163.com/.help/CentOS${release}-Base-163.repo -o $YUM/CentOS${release}-Base-163.repo
-[ $distribution == "Red" ] && [ $release == "5" ] && sed -i 's#$releasever#5.10#g' $YUM/CentOS${release}-Base-163.repo
-[ $distribution == "Red" ] && [ $release == "6" ] && sed -i 's#$releasever#6.7#g' $YUM/CentOS${release}-Base-163.repo
-[ -f "$YUM/redhat.repo" ] && \cp $YUM/CentOS${release}-Base-163.repo $YUM/redhat.repo
 
 # just for centos6 x86_64
 [ "$1" == "mruse" -a "$release" == "6" -a  "$(uname -i)" == 'x86_64' ] && sed -i 's#baseurl=.*#baseurl=http://mirrors.mruse.cn:8080/centos/6/x86_64/#g' /etc/yum.repos.d/$1.repo
 
-yum_param="-C --nogpgcheck --noplugins --skip-broken "
+#yum_param="-C --nogpgcheck --noplugins --skip-broken "
 [ "$1" != "" ] && yum_param=$yum_param"--disablerepo=* --enablerepo=$1 "
-[ "$1" != "" ] && sed -i 's#^keepcache=.*#keepcache=1#g' /etc/yum.conf
+#[ "$1" != "" ] && sed -i 's#^keepcache=.*#keepcache=1#g' /etc/yum.conf
 [ "$1" != "" ] && yum clean all
 [ "$1" != "" ] && yum $yum_param -y update
 
