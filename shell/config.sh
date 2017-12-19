@@ -10,7 +10,11 @@ dbhost="localhost"			# 数据库服务器IP，默认localhost, 数据库服务�
 redishost="127.0.0.1"		# Redis服务器IP，默认127.0.0.1, 非本机，请填写 Redis服务器内网IP
 nlpshost="127.0.0.1"		# nlp服务器IP，  默认127.0.0.1, 非本机，请填写 Nlp服务器内网IP(一般跟数据库服务器保持一致)
 domain="zzb.hj"
+<<<<<<< HEAD
 ADMIN="sitepub"
+=======
+ADMIN="pubstage"
+>>>>>>> 606baba96435932aa08ae6a3cc24b47a1b5a65ae
 htdocs="/data/www"
 mysql="/data/mysql"
 nlpdata="/data/nlp"
