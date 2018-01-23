@@ -1,0 +1,399 @@
+企业级Nginx服务基础到架构优化详解--25条
+
+1、隐藏nginx header版本号
+
+查看版本号[root@db02 ~]# curl -I http://www.lichengbing.cn 
+编译nginx.conf配置文件，添加server_tokens off参数
+http {
+   ...
+    server_tokens off; #控制http response header内的服务版本信息的显示，以及错误信息中web服务版本信息
+   ...
+}
+
+2、更改源码隐藏软件名称
+
+修改3个nginx源码文件
+
+第一个nginx-1.6.3/src/core/nginx.h文件
+[root@lichengbing nginx-1.6.3]# cd ~/tools/nginx-1.6.3
+[root@lichengbing nginx-1.6.3]# sed -n '13,17p' src/core/nginx.h 
+#define NGINX_VERSION      "1.6.3" #改成你想要的版本号，如2.2.5
+#define NGINX_VER          "Nginx/" NGINX_VERSION #你想改成的软件名称，如Apache
+#define NGINX_VAR          "NGINX" #可以改成OWS等
+#define NGX_OLDPID_EXT     ".oldbin"
+
+第二个
+	
+[root@lichengbing nginx-1.6.3]# sed -i 's#Server: nginx#Server: OWS#g' src/http/ngx_http_header_filter_module.c
+第三个ngx_http_special_response.c是否对外展示敏感信息
+[root@lichengbing nginx-1.6.3]# sed -n '21,30p' src/http/ngx_http_special_response.c 
+static u_char ngx_http_error_full_tail[] =
+"<hr><center>" NGINX_VER "</center>" CRLF
+"</body>" CRLF
+"</html>" CRLF
+;
+static u_char ngx_http_error_tail[] =
+"<hr><center>nginx</center>" CRLF
+"</body>" CRLF
+
+修改为如下
+[root@lichengbing nginx-1.6.3]# sed -n '21,30p' src/http/ngx_http_special_response.c 
+static u_char ngx_http_error_full_tail[] =
+"<hr><center>" NGINX_VER " (http://www.lichengbing.cn)</center>" CRLF
+"</body>" CRLF
+"</html>" CRLF
+;
+static u_char ngx_http_error_tail[] =
+"<hr><center>OWS</center>" CRLF
+"</body>" CRLF
+
+重新编译安装nginx，重启服务
+
+3、更改nginx默认用户及用户组
+[root@lichengbing ~]# grep '#user' /application/nginx/conf/nginx.conf.default 
+#user  nobody; #系统默认的用户为nobody
+[root@lichengbing ~]# useradd www -s /sbin/nologin -M #建立用户www
+user  www www; #nginx.conf 中配置用户
+也可以在编译时加入用户和用户组，如
+--user=www --group=www --with-http_ssl_module --with-http_stub_status_module --prefix=/application/nginx-1.6.3/
+[root@lichengbing ~]# ps -ef|grep nginx|grep -v grep
+root      1386     1  0 Jul21 ?        00:00:00 nginx: master process /application/nginx/sbin/nginx
+www      24732  1386  0 23:19 ?        00:00:00 nginx: worker process
+#此时worker process进程就是使用的www用户权限，当然也可以使master降权运行
+
+4、配置nginx worker进程个数
+worker_processes  8; #最好为服务器CPU的逻辑核心数
+[root@netmonitor ~]# grep "physical id" /proc/cpuinfo|sort|uniq|wc -l #物理核数
+2
+[root@netmonitor ~]# grep "cpu cores" /proc/cpuinfo|uniq #单核心数
+cpu cores         : 4
+[root@netmonitor ~]# grep "processor" /proc/cpuinfo|wc -l #逻辑核心数
+8
+
+5、根据cpu核数进行nginx进程优化
+亲和力参数（Nginx服务可能会发生只在同一颗CPU上起作用的情况）
+worker_processes  8；
+worker_cpu_affinity 0001 0010 0100 1000; #数字代表1、2、3、4的掩码，平均分摊进程压力
+worker_cpu_affinity 00000001 00000010...#8核心写法
+
+防止进程只在一个核心上运行也可以使用 taskset 命令	
+taskset -c 1,2,3 /application/nginx/sbin/nginx start
+
+6、nginx事件处理模型优化
+
+nginx的连接处理机制在不同的操作系统中会采用不同的I/O模型：Linux上使用epoll、BSD上面用kqueue、Solaris中使用/dev/poll、windows中使用icop.
+events {
+    use epoll; #nginx官方建议，可以不指定事件处理模型，Nginx会自动选择最佳的事件处理模型
+}
+
+7、调整Nginx worker单个进程允许的客户端最大连接数
+worker_processes  8;
+events {
+    worker_connections  1024;
+}
+#最大连接数Max_client = worker_processes * worker_connections
+#进程的最大连接数收Linux系统进程的最大打开文件数限制，在执行操作系统命令“ulimit -HSn 65535”后，才能生效
+#连接数并不是越大越好，要在系统性能能接受的范围内
+
+8、配置Nginx worker进程最大打开文件数
+events {
+    worker_rlimit_nofile 65535; #该值可设置为系统优化后的ulimit -HSn的结果
+}
+
+9、开启高效的文件传输模式
+http {
+    sendfile        on; #开启文件的高效传输模式
+}
+#同时将tcp_nopush和tcp_nodelay两个指令设置为on，减少网络传输包数量、防止网络及磁盘的I/O阻塞，提升Nginx效率
+
+10、设置连接超时时间
+http {
+    keepalive_timeout  65; #设置客户端连接保持会话的超时时间
+    tcp_nodelay on; #激活tcp_nodelay，提高I/O性能，在包含keepalive参数时才有效
+    client_header_timeout 15; #读取客户端请求头数据超时时间，超时则返回“Request time out（408）”
+    client_body_timeout 15; #读取客户端请求主体超时时间
+    send_timeout 15; #指定客户端响应时间
+}
+#将无用的连接尽快设置为超时，可以保护服务器的系统资源（CPU、内存、磁盘）
+
+11、上传文件大小设置（动态应用）
+http {
+ client_max_body_size 10m; #具体数字要根据业务需求决定
+}
+
+12、fastcgi调优（配合PHP引擎动态服务）
+fastcgi作为静态服务和动态服务之间的接口，也有cache和buffer缓存和缓冲区
+http {
+    fastcgi_connect_timeout 240; #连接到后端fastcgi的超时时间
+    fastcgi_send_timeout 240; #已经和fastcgi建立连接后多久不传送数据，就会被断开
+    fastcgi_read_timeout 240; #接收fastcgi应答的超时时间
+    fastcgi_buffer_size 64k; #指定读取fastcgi应答第一部分需要多大的缓冲区，可以设置为fastcgi_buffers选项指定的缓冲区大小
+    fastcgi_busy_buffers_size 128k; #繁忙时的buffer，可以是fastcgi_buffer的两倍
+    fastcgi_temp_path /data/ngx_fcgi_tmp; 在写入fastcgi_temp_path时将用多大的数据库，默认是fastcgi_buffer的两倍，如果太小，可能会报502 Bad GateWay
+    fastcgi_cache_path /data/ngx_fcgi_cache levels=2:2 keys_zone=ngx_fcgi_cache:512m inactive=1d max_size=40g; #指定相关参数配比
+}
+
+在server标签中配合设置相关参数
+server {
+    location ~ .*\.(php|php5)?$ {
+            root html/www;
+            fastcgi_pass        127.0.0.1:9000;
+            fastcgi_index       index.php;
+            include fastcgi.conf;
+            fastcgi_cache ngx_fcgi_cache;#表示开启缓存并为其指定一个名称，开启缓存非常有用，可以有效降低cpu的负载，并且防止502的发生，但是也可能会带来其他问题
+            fastcgi_cache_valid 200 302 1h; #将对应的应答码缓存时间
+            fastcgi_cache_valid 301 1d; #将301缓存1天
+            fastcgi_cache_valid any 1m; #将其他应答缓存1分钟
+            fastcgi_cache_min_uses 1; #请求数量
+            fastcgi_cache_use_stale error timeout invalid_header http_500; #错误判断
+        }
+    }
+
+13、配置nginx gzip压缩功能
+
+###（重要！！！）几k字节的压缩比在大数据量的冲击下也可以节省不少的流量，网站内容传输速度更快，为用户带来更好的浏览体验
+Nginx gzip压缩模块提供了压缩文件内容的功能，用户请求的内容在发送到用户客户端之前，Nginx服务器会根据一些具体的策略实施压缩，到客户端后由浏览器解压
+Nginx 依赖ngx_http_gzip_module模块
+Apache 使用mod_deflate压缩功能
+
+http {
+    gzip on; #开启压缩功能
+    gzip_min_length 1k; #允许压缩的最小页面字节数，从header头的Content-Length中获取，不管页面多大都进行压缩，建议设置成大于1K,如果小于1K可能会越压缩越大
+    gzip_http_version 1.1; #压缩版本，默认为1.1，目前大部分浏览器都支持压缩
+    gzip_buffers  4 32k; #压缩缓冲大小，允许申请4个单位为32K的内存作为流缓存
+    gzip_comp_level 9; #压缩比例，1最小，9最大，传输速度最快，但是比较消耗资源
+    gzip_types text/css text/xml application/javascript; #指定压缩的内容类型
+    gzip_vary on; #vary header支持，让前端的缓存服务器继续缓存传输该压缩页面，而不提前解压
+}
+
+14、配置Nginx expires缓存功能
+
+（重要！！！）
+
+在网站的开发和运营过程中，视频、图片、CSS、JS等网站元素的更改机会较少，我们可以将这些更改频率较少的内容缓存在用户本地，用户在第二次访问网站时就不用继续去服务器下载了，节省流量，加快访问速度
+
+server {
+	location ~ .*\.(gif|jpg|jpeg|png|bmp|swf)$ #指定缓存文件的类型
+     {
+        expires      3650d; #指定缓存时间
+     }
+     location ~ .*\.(js|css)?$
+     {
+        expires      3d;
+     }
+}
+
+expires缓存的缺点就是在网站更新相关数据后，用户如果不清理缓存看到的就会一直是过期的数据，为了解决这个问题，可以:
+1、缩短缓存时间，比如百度的首页图片缓存时间为一天；
+2、服务后台更改图片名称，这样就相当于是一个新的页面内容，用户会重新下载 
+3、相关的CSS、JS推送到CDN
+
+15、Nginx日志相关优化与安全
+
+1）每天进行日志切割，备份
+
+#!/bin/sh
+cd /application/nginx/logs/
+mv www_access.log www.access_$(date +%F -d -1day).log
+mv blog_access.log blog.access_$(date +%F -d -1day).log
+/application/nginx/sbin/nginx -s reload
+
+cat >>/var/spool/cron/root<<EOF
+00 00 * * * /bin/sh /server/scripts/cut_nginx_log.sh >/dev/null 2>& 1
+EOF
+
+2)不记录不需要的访问日志
+
+对于健康检查或者某些图片、JS、CSS日志，一般不需要记录日志，因为在统计PV时是按照页面计算的，而且写入频繁会消耗IO，降低服务器性能
+location ~ .*\.(js|jpg|JPG|jpeg|JPEG|css|bmp|gif|GIF)$ {
+        access_log off;
+        }
+
+3）访问日志的权限设置
+
+chown -R root.root /application/nginx/logs
+chmod -R 700 /application/logs  
+
+16、Nginx站点目录及文件URL访问控制（防止恶意解析）
+
+1）根据扩展名限制程序或者文件被访问
+
+资源文件夹如用户上传的头像，防止恶意上传脚本病毒文件被解析执行
+
+server {
+        location ~ ^/images/.*\.(php|php5|sh|pl|py)$ { #指定目录限制访问
+            deny all;
+        }
+        location ~ ^/static/.*\.(php|php5|sh|pl|py)$ {
+            deny all;
+        }
+        location ~ ^/data/.*\.(php|php5|sh|pl|py)$ {
+            deny all;
+        }
+        location ~ .*\.(php|php5)?$ { #必须配置在解析之前
+            root html/www;
+            fastcgi_pass        127.0.0.1:9000;
+            fastcgi_index       index.php;
+            include fastcgi.conf;
+        }
+}
+
+2）禁止访问目录并返回指定HTTP代码
+
+server {
+    location /admin/ { return 404； }
+}
+
+3）限制网站来源IP
+
+server {
+       location ~ ^/admin/ {
+            allow 202.111.12.211;
+           #allow 192.168.1.0/24; #也可以限制IP段
+            deny all;
+        }
+}
+
+企业问题案列：Nginx做方向代理的时候可以限制客户端IP吗？
+
+方法一：用if来控制
+
+if （ $remotea_addr = 10.0.0.110 ） {
+  return 403;
+}
+if （ $remotea_addr = 10.0.0.111 ） {
+  set $allow_access_root 'true';
+}
+
+方法二：利用deny和allow
+
+location / {
+  root html/blog;
+  index index.php index.html index.html;
+  deny 10.0.0.7;
+  allow all;
+}
+
+17、防止恶意解析访问企业网站
+
+方法一
+
+server {
+  listen 80 default_server;
+  server_name _;
+  return 501;
+}      
+
+方法二
+
+server {
+  listen 80 default_server;
+  server_name _;
+  rewrite ^(.*) http://www.lichengbing.cn$1 permanent;
+}
+
+方法三
+
+server {
+ if ($host !~ ^www/.lichengbing/.com$) {
+  rewrite ^(.*) http://www.lichengbing.cn$1 permanent;
+}
+
+18、Nginx图片及目录防盗链
+
+网站图片被盗链最直接的影响就是网络带宽占用加大了，宽带费用变高了，网络流量忽高忽低，Zabbix频繁告警
+
+由于购买了CDN加速，流量高了好几个G，瞬间损失好几万...
+
+利用referer防盗链
+
+location ~.* \.(jpg|gif|png|swf|flv|wma|wmv|asf|mp3|mmf|zip|rar)$ {
+    valid_referers none blocked *.lichengbing.cn lichengbing.cn;
+ if ($invalid_referer) {
+    rewrite ^/ http://www.lichengbing.cn/img/nolink.jpg
+   }
+}
+#或者也可以使用NginxHttpAccessKeyModule实现防盗链
+
+19、Nginx错误页面的优雅显示
+
+server {
+  error_page 403   /403.html; #当出现403错误时，会跳转到403.html页面
+}
+
+20、Nginx防爬虫优化
+
+robots.txt机器人协议
+
+网络爬虫排除标准，告诉搜索引擎哪些目录可以抓取，哪些禁止抓取
+
+禁止下载协议代理
+
+if ($http_user_agent ~* LWP::Simple|BBBike|wget) {
+    return 403;
+}
+
+防止N多爬虫代理访问网站
+
+if ($http_user_agent ~*
+  “qihoobot|Baiduspider|Googlebot|Googlebot-Mobile|Googlebot-Image|Mediapartners-Google|Adsbot-Google|Yahoo! Slurp China|YoudaoBot|Sosospider|Sogou spider|Sogou web spider|MSNBot”) {
+   return 403;
+}
+
+禁止不同浏览器访问
+
+if ($http_user_agent ~* “Firefox|MSIE”)
+{
+    rewrite ^(.*) http://blog.etiantian.org/$1 permanent
+}
+
+21 、限制HTTP请求方法
+
+if ($request_method !~ ^(GET|HEAD|POST)$ ) {
+   return 501;
+}
+
+只允许GET等，允许DELETE、SEARCH等
+为防止黑客通过上传服务器执行木马，也可以在上传服务器上做限制HTTP的GET
+
+if ($request_method ~* ^(GET)$ ) {
+  return 501;
+}
+
+22、防DOS攻击
+
+使用limit_conn_zone进行控制，控制单个IP或域名的访问次数，限制连续访问
+
+limit_conn_zone $binary_remote_addr zone=perip:10m;
+limit_conn_zone $server_remote_addr zone=perserver:10m;
+server {
+limit_conn perip 10;
+limit_conn perserver 100;
+}
+#还可以使用limit_req_zone进行控制，控制单个IP的访问速率
+
+23、使用CDN为网站内容加速
+
+全国或全球的内容分布式缓存集群，其实质通过智能DNS判断用户的来源地域及上网线路，为用户选择一个最接近用户地域，以及和用户上网线路相同的服务器节点，提升用户浏览网站的体验
+
+要加速的业务数据应该存在独立的域名，然后删除A记录解析，使用CNAME解析
+
+24、Nginx程序架构优化
+
+解耦，一堆程序代码按照业务用途分开，然后提供服务，例如：注册登录、上传、下载、浏览列表、商品内容、订单支付等都应该是独立的程序服务，只不过在客户端看来是一个整体而已，小公司最起码要做到的解耦是
+
+01网页页面服务
+02图片附件及下载服务
+03上传图片服务
+
+25、使用普通用户启动Nginx(监牢模式)
+
+降权思想，Nginx的Master进程使用的是root用户，worker进程使用的是nginx指定的普通用户，用root跑nginx的Master进程有两大问题：
+
+1、是最小化权限分配遇到问题；
+2、网站一旦有漏洞，很容易丢掉root权限
+
+降权执行的好处：
+
+1、创建普通用户inca，用inca跑Nginx服务，开发运维都使用普通帐号，只要和inca同组，照样可以管理nginx，还解决了root权限太大问题
+2、职责分明，相关账号负责维护程序和日志，出问题负首要责任
