@@ -1,0 +1,273 @@
+1、安装组件
+yum install -y openldap openldap-servers openldap-clients migrationtools
+
+cp /usr/share/openldap-servers/DB_CONFIG.example /var/lib/ldap/DB_CONFIG  
+chown ldap. /var/lib/ldap/DB_CONFIG 
+
+systemctl start slapd   
+systemctl enable slapd  
+netstat -tlnp | grep slapd  
+
+2、设置 OpenLDAP 的管理员密码
+
+slappasswd
+
+{SSHA}Qa7/Lc/lIX635/1cY87VaW6gU0RFRbRq
+
+touch chrootpw.ldif  
+echo "dn: olcDatabase={0}config,cn=config" >> chrootpw.ldif  
+echo "changetype: modify" >> chrootpw.ldif  
+echo "add: olcRootPW" >> chrootpw.ldif  
+echo "olcRootPW: {SSHA}Qa7/Lc/lIX635/1cY87VaW6gU0RFRbRq" >> chrootpw.ldif  
+
+ldapadd -Y EXTERNAL -H ldapi:/// -f chrootpw.ldif
+
+3、导入基本 Schema
+cd /etc/openldap/schema/  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f cosine.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f nis.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f collective.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f corba.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f core.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f duaconf.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f dyngroup.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f inetorgperson.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f java.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f misc.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f openldap.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f pmi.ldif  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f ppolicy.ldif    
+
+4、设置自己的 Domain Name
+首先要生成经处理后的目录管理者明文密码： 
+slappasswd
+{SSHA}jRW55QRvbbLXrF1Wa6uEj3iI0W/0t8Na
+
+1)vim chdomain.ldif 
+# replace to your own domain name for "dc=***,dc=***" section
+# specify the password generated above for "olcRootPW" section
+dn: olcDatabase={1}monitor,cn=config
+changetype: modify
+replace: olcAccess
+olcAccess: {0}to * by dn.base="gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth"  
+  read by dn.base="cn=Manager,dc=zzb,dc=hj" read by * none  
+
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+replace: olcSuffix
+olcSuffix: dc=zzb,dc=hj
+
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+replace: olcRootDN
+olcRootDN: cn=Manager,dc=zzb,dc=hj
+
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+add: olcRootPW
+olcRootPW: {SSHA}jRW55QRvbbLXrF1Wa6uEj3iI0W/0t8Na
+
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+add: olcAccess
+olcAccess: {0}to attrs=userPassword,shadowLastChange by dn="cn=Manager,dc=zzb,dc=hj" write by anonymous auth by self write by * none
+olcAccess: {1}to dn.base="" by * read
+olcAccess: {2}to * by dn="cn=Manager,dc=zzb,dc=hj" write by * read
+
+ldapmodify -Y EXTERNAL -H ldapi:/// -f chdomain.ldif
+
+2)vim basedomain.ldif 
+# replace to your own domain name for "dc=***,dc=***" section
+dn: dc=zzb,dc=hj
+objectClass: top
+objectClass: dcObject
+objectclass: organization
+ou: Server World
+dc: zzb
+
+dn: cn=Manager,dc=zzb,dc=hj
+objectClass: organizationalRole
+cn: Manager
+description: Directory Manager
+
+dn: ou=People,dc=zzb,dc=hj
+objectClass: organizationalUnit
+ou: People
+
+dn: ou=Group,dc=zzb,dc=hj
+objectClass: organizationalUnit
+ou: Group
+
+ldapadd -x -D cn=Manager,dc=zzb,dc=hj -W -f basedomain.ldif  
+
+5、允许防火墙访问 LDAP 服务。开启 389/TCP 端口
+firewall-cmd --add-service=ldap --permanent  
+firewall-cmd --reload  
+
+vim /etc/sysconfig/iptables
+或vim/etc/sysconfig/ip6tables  
+
+iptables -A INPUT -p tcp -m state --state NEW -dport 389 -j ACCEPT
+iptables -A OUTPUT -p tcp -m state --state NEW -sport 389 -j ACCEPT
+
+iptables -A INPUT -p tcp -m state --state NEW -dport 636 -j ACCEPT
+iptables -A OUTPUT -p tcp -m state --state NEW -sport 636 -j ACCEPT
+service iptables save
+service iptables restart
+
+6、向 OpenLDAP Server 中添加用户
+slappasswd 
+{SSHA}lMo7w65rRwWDiQw1Cvso4aaHSfx5o1Yq
+
+1)vim ldapuser.ldif
+# create new
+# replace to your own domain name for "dc=***,dc=***" section
+dn: uid=cent,ou=People,dc=zzb,dc=hj
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: Cent  
+sn: Linux
+userPassword: {SSHA}lMo7w65rRwWDiQw1Cvso4aaHSfx5o1Yq
+loginShell: /bin/bash
+uidNumber: 1001
+gidNumber: 1001
+homeDirectory: /home/cent
+
+dn: cn=cent,ou=Group,dc=zzb,dc=hj 
+objectClass: posixGroup
+cn: Cent
+gidNumber: 1001
+memberUid: cent
+
+ldapadd -x -D cn=Manager,dc=zzb,dc=hj -W -f ldapuser.ldif
+
+2)将 Linux 中已有的用户及用户组（也就是 passwd/group 文件）导入到 LDAP 中
+
+vi ldapuser.sh
+#!/bin/bash  
+# extract local users and groups who have 1000-9999 digit UID  
+# replace "SUFFIX=***" to your own domain name  
+# this is an example  
+  
+SUFFIX='dc=zzb,dc=hj'  
+LDIF='ldapuser.ldif'  
+  
+echo -n > $LDIF  
+GROUP_IDS=()  
+grep "x:[1-9][0-9][0-9][0-9]:" /etc/passwd | (while read TARGET_USER  
+do  
+    USER_ID="$(echo "$TARGET_USER" | cut -d':' -f1)"  
+  
+    USER_NAME="$(echo "$TARGET_USER" | cut -d':' -f5 | cut -d' ' -f1,2)"  
+    [ ! "$USER_NAME" ] && USER_NAME="$USER_ID"  
+  
+    LDAP_SN="$(echo "$USER_NAME" | cut -d' ' -f2)"  
+    [ ! "$LDAP_SN" ] && LDAP_SN="$USER_NAME"  
+  
+    LASTCHANGE_FLAG="$(grep "${USER_ID}:" /etc/shadow | cut -d':' -f3)"  
+    [ ! "$LASTCHANGE_FLAG" ] && LASTCHANGE_FLAG="0"  
+  
+    SHADOW_FLAG="$(grep "${USER_ID}:" /etc/shadow | cut -d':' -f9)"  
+    [ ! "$SHADOW_FLAG" ] && SHADOW_FLAG="0"  
+  
+    GROUP_ID="$(echo "$TARGET_USER" | cut -d':' -f4)"  
+    [ ! "$(echo "${GROUP_IDS[@]}" | grep "$GROUP_ID")" ] && GROUP_IDS=("${GROUP_IDS[@]}" "$GROUP_ID")  
+  
+    echo "dn: uid=$USER_ID,ou=People,$SUFFIX" >> $LDIF  
+    echo "objectClass: inetOrgPerson" >> $LDIF  
+    echo "objectClass: posixAccount" >> $LDIF  
+    echo "objectClass: shadowAccount" >> $LDIF  
+    echo "sn: $LDAP_SN" >> $LDIF  
+    echo "givenName: $(echo "$USER_NAME" | awk '{print $1}')" >> $LDIF  
+    echo "cn: $USER_NAME" >> $LDIF  
+    echo "displayName: $USER_NAME" >> $LDIF  
+    echo "uidNumber: $(echo "$TARGET_USER" | cut -d':' -f3)" >> $LDIF  
+    echo "gidNumber: $(echo "$TARGET_USER" | cut -d':' -f4)" >> $LDIF  
+    echo "userPassword: {crypt}$(grep "${USER_ID}:" /etc/shadow | cut -d':' -f2)" >> $LDIF  
+    echo "gecos: $USER_NAME" >> $LDIF  
+    echo "loginShell: $(echo "$TARGET_USER" | cut -d':' -f7)" >> $LDIF  
+    echo "homeDirectory: $(echo "$TARGET_USER" | cut -d':' -f6)" >> $LDIF  
+    echo "shadowExpire: $(passwd -S "$USER_ID" | awk '{print $7}')" >> $LDIF  
+    echo "shadowFlag: $SHADOW_FLAG" >> $LDIF  
+    echo "shadowWarning: $(passwd -S "$USER_ID" | awk '{print $6}')" >> $LDIF  
+    echo "shadowMin: $(passwd -S "$USER_ID" | awk '{print $4}')" >> $LDIF  
+    echo "shadowMax: $(passwd -S "$USER_ID" | awk '{print $5}')" >> $LDIF  
+    echo "shadowLastChange: $LASTCHANGE_FLAG" >> $LDIF  
+    echo >> $LDIF  
+done  
+  
+for TARGET_GROUP_ID in "${GROUP_IDS[@]}"  
+do  
+    LDAP_CN="$(grep ":${TARGET_GROUP_ID}:" /etc/group | cut -d':' -f1)"  
+  
+    echo "dn: cn=$LDAP_CN,ou=Group,$SUFFIX" >> $LDIF  
+    echo "objectClass: posixGroup" >> $LDIF  
+    echo "cn: $LDAP_CN" >> $LDIF  
+    echo "gidNumber: $TARGET_GROUP_ID" >> $LDIF  
+  
+    for MEMBER_UID in $(grep ":${TARGET_GROUP_ID}:" /etc/passwd | cut -d':' -f1,3)  
+    do  
+        UID_NUM=$(echo "$MEMBER_UID" | cut -d':' -f2)  
+        [ $UID_NUM -ge 1000 -a $UID_NUM -le 9999 ] && echo "memberUid: $(echo "$MEMBER_UID" | cut -d':' -f1)" >> $LDIF  
+    done  
+    echo >> $LDIF  
+done  
+) 
+
+sh ldapuser.sh
+
+ldapadd -x -D cn=Manager,dc=zzb,dc=hj -W -f ldapuser.ldif
+
+7、删除 LDAP 用户或组
+删除用户：
+ldapdelete -x -W -D 'cn=Manager,dc=zzb,dc=hj' "uid=ldapuser1,ou=People,dc=zzb,dc=hj"  
+
+删除组：
+ldapdelete -x -W -D 'cn=Manager,dc=zzb,dc=hj' "cn=ldapuser1,ou=Group,dc=zzb,dc=hj" 
+
+8、配置 LDAP 客户端，实现网络用户信息共享
+
+首先安装必要包：
+yum install -y openldap-clients nss-pam-ldapd authconfig authconfig-gtk 
+
+authconfig --enableldap \  
+  --enableldapauth \  
+  --ldapserver=192.168.0.201 \  
+  --ldapbasedn="dc=zzb,dc=hj" \  
+  --enablemkhomedir \  
+  --update  
+
+  之后就可以在任何一台机器上，使用 LDAP 用户登录客户端了
+
+9、查询 LDAP 用户信息
+ldapsearch -x -b "dc=zzb,dc=hj" -H ldap://192.168.137.48
+
+10、安装 phpLDAPadmin
+安装 phpLDAPadmin 需要 LAMP 环境
+yum install -y phpldapadmin
+
+vim /etc/phpldapadmin/config.php
+修改内容，解除 397 行的注释，注释到 398 行。修改后的结果如下：
+
+$servers->setValue('login','attr','dn');  
+// $servers->setValue('login','attr','uid'); 
+
+vim /etc/httpd/conf.d/phpldapadmin.conf
+
+修改内容如下：
+
+Alias /phpldapadmin /usr/share/phpldapadmin/htdocs  
+Alias /ldapadmin /usr/share/phpldapadmin/htdocs  
+<Directory /usr/share/phpldapadmin/htdocs>  
+  <IfModule mod_authz_core.c>  
+    # Apache 2.4  
+    Require local  
+    # 追加内容，设置允许访问 phpLDAPadmin 的 IP 段  
+    Require ip 192.168.0.0/16  
+
+重新启动 Apache
+systemctl restart httpd  
+
+访问地址：http://[your ip]/ldapadmin 或 http://[your ip]/phpldapadmin 
+注意，登录时输入的是 DN，例如：cn=Manager,dc=zzb,dc=hj 

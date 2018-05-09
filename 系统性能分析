@@ -92,10 +92,10 @@ rpm -ivh kernel-debug-debuginfo-$(uname -r).rpm
 
 3）安装systemtap包
 
-yum install -y gcc systemtap systemtap-runtime kernel-debug kernel-devel kernel-debug-devel kernel-fireware
+yum install -y gcc systemtap systemtap-runtime kernel-debug kernel-devel kernel-debug-devel kernel-firmware
 
 4)编译systemtap脚本
- cd /usr/share/doc/systemtap-client-2.5/example
+ cd /usr/share/systemtap/examples
  ls -lrt
  cp profiling/topsys.stp /tmp && cd /tmp
  测试脚本：
