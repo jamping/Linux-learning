@@ -1,0 +1,128 @@
+yum install -y sysstat
+
+1、CPU性能分析
+
+1）每秒统计一次cpu，一共统计3次
+
+LANG=c  将时间从12小时制转换成24小时制
+mpstat 1 3
+
+2）查看多核cpu的使用情况
+mpstat -P ALL 1 1
+
+2、CPU硬件信息工具
+lscpu
+dmidecode -t processor |less
+
+3、内存性能分析工具
+free -m
+cat /proc/meminfo
+vmstat -a 1 5
+
+4、磁盘性能分析工具
+iostat 1 5 -k /dev/sda
+iotop
+sar -f /var/log/sa/sa22 -q |sort -nr -k 3 | more
+
+5、软件分析基本工具
+ldd /usr/bin/mysql  查看库文件依赖
+strace ./hello.py  查看脚本运行系统调用
+strace -c ./hello.py 统计系统调用次数
+strace -c -S calls ./hello.py 按calls次数排序
+strace -c -e open ./hello.py 只查看open调用情况
+ltrace -cf grep root /etc/passwd 跟踪库函数调用
+ltrace -p `pidof mysql` 跟踪一个进程的库函数调用
+
+进程间通信
+ipcs
+
+semaphores:信号量
+message queues:消息队列
+share memory regions:共享内存段
+
+配置共享内存，假如为1024M
+1)ipcs -l -m
+
+------ Shared Memory Limits --------
+max number of segments = 4096
+max seg size (kbytes) = 18014398509465599
+max total shared memory (kbytes) = 18014398442373116
+min seg size (bytes) = 1
+
+2)echo $[1024*1024/4]
+262144
+
+3)sysctl -w kernel.shmall=262144
+4)ipcs -l -m
+
+------ Shared Memory Limits --------
+max number of segments = 4096
+max seg size (kbytes) = 18014398509465599
+max total shared memory (kbytes) = 1048576
+min seg size (bytes) = 1
+
+清除共享内存
+1）ipcs -m
+
+------ Shared Memory Segments --------
+key        shmid      owner      perms      bytes      nattch     status      
+0x0112628a 0          root       600        1000       6   
+
+2)ipcrm -M 0x0112628a
+
+3)ipcs -m
+
+------ Shared Memory Segments --------
+key        shmid      owner      perms      bytes      nattch     status      
+0x00000000 0          root       600        1000       6          dest  
+
+systemtap 内核态进程跟踪程序
+1）下载kernel-debuginfo-common、kernel-debuginfo、kernel-debug-debuginfo
+
+wget http://debuginfo.centos.org/$(cat /etc/redhat-release|awk '{print int($4)}')/$(uname -i)/kernel-debuginfo-common-$(uname -i)-$(uname -r).rpm
+
+wget http://debuginfo.centos.org/$(cat /etc/redhat-release|awk '{print int($4)}')/$(uname -i)/kernel-debuginfo-$(uname -r).rpm
+
+wget http://debuginfo.centos.org/$(cat /etc/redhat-release|awk '{print int($4)}')/$(uname -i)/kernel-debug-debuginfo-$(uname -r).rpm
+
+2）安装
+rpm -ivh kernel-debuginfo-common-$(uname -i)-$(uname -r).rpm
+rpm -ivh kernel-debuginfo-$(uname -r).rpm
+rpm -ivh kernel-debug-debuginfo-$(uname -r).rpm
+
+3）安装systemtap包
+
+yum install -y gcc systemtap systemtap-runtime kernel-debug kernel-devel kernel-debug-devel kernel-fireware
+
+4)编译systemtap脚本
+ cd /usr/share/doc/systemtap-client-2.5/example
+ ls -lrt
+ cp profiling/topsys.stp /tmp && cd /tmp
+ 测试脚本：
+ stap -v topsys.stp
+ 编译模块：
+ stap -v -p4 -m topsys.ko topsys.stp
+ 测试模块：
+ staprun topsys.ko
+ cat /dev/zero > /dev/null
+ staprun topsys.ko
+
+ 6、内存相关
+
+ 内存泄漏
+ valgrind --tool=memcheck command...
+
+ 主页缺失和次页缺失
+ ps o pid,comm,minflt,majflt `pidof mysql`
+
+ Out of Memory:次页缺失的时候，恰好系统无法再释放物理内存，此时系统只有杀掉一些进程来释放内存。为避免此种情况发生，可以设置kernel panic:
+ echo 1 > /proc/sys/vm/panic_on_oom
+
+ "超卖"内存，/proc/sys/vm/overcommit_memory，有三种模式：
+ 0是默认模式，尽可能多的响应进程的内存申请
+ 1是完全响应，不管自己资源还有多少
+ 2是不允许超过设置，swap+RAM*("/proc/sys/vm/overcommit_ratio"/100)
+
+
+
+
