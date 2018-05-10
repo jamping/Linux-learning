@@ -271,3 +271,80 @@ systemctl restart httpd
 
 访问地址：http://[your ip]/ldapadmin 或 http://[your ip]/phpldapadmin 
 注意，登录时输入的是 DN，例如：cn=Manager,dc=zzb,dc=hj 
+
+11、通过migrationtools实现openldap用户及用户组的添加
+
+vim adduser.sh
+
+#!/bin/bash
+# Add system user
+for ldap in {1..5};do
+  if id user${ldap} &> /dev/null;then
+     echo "System account already exists"
+  else
+     adduser user${ldap}
+     echo user${ldap} |passwd --stdin user${ldap} &> /dev/null
+     echo "user${ldap} system add finished"
+   fi
+done
+
+tail -n 5 /etc/passwd > system
+/usr/share/migrationtools/migrate_passwd.pl system people.ldif
+
+tail -n 5 /etc/group > group
+/usr/share/migrationtools/migrate_group.pl group group.ldif
+
+ldapadd -x -W -D "cn=Manager,dc=zzb,dc=hj" -f people.ldif
+ldapadd -x -W -D "cn=Manager,dc=zzb,dc=hj" -f group.ldif
+
+12、创建索引
+
+查看索引
+ldapsearch -Q -LLL -Y EXTERNAL -H ldapi:/// -b cn=config '(olcDatabase={2}hdb)' olcDbIndex
+
+cat >> hdb-index.ldif << EOF
+dn: olcDatabase={2}hdb,cn=config
+changetype: modify
+add: olcDbIndex
+olcDbIndex: sn pres,eq,sub
+EOF
+
+ldapmodify -Q -Y EXTERNAL -H ldapi:/// -f hdb-index.ldif
+ldapsearch -Q -LLL -Y EXTERNAL -H ldapi:/// -b cn=config '(olcDatabase={2}hdb)' olcDbIndex ｜grep -i 'sn'
+
+13、常用命令
+
+查找
+ldapsearch -x -LLL -b dc=zzb,dc=hj 'uid=jjp' cn gidNumber
+
+-x:简单认证，不使用任何加密算法
+-LLL：禁止输出与过滤条件不匹配的信息
+-b:查找的节点
+uid:过滤条件
+cn gidNumber：对信息进行再过滤
+
+添加
+ldapadd -x -D "cn=Manager,dc=zzb,dc=hj" -W -h 192.168.0.201 -f base.ldif
+
+-D:指定DN
+-W：提示输入密码
+-h:openldap主机，可用FQDN或IP地址
+
+删除
+ldapdelete -D "cn=Manager,dc=zzb,dc=hj" -W -H ldapi:/// -x
+
+修改
+
+如对账户解锁
+cat << EOF ｜ldapmodify -x -H ldapi:/// -D cn=config -W
+dn: uid=jjp,ou=people,dc=zzb,dc=hj
+changetype: modify
+delete: pwdAccountLockedTime
+EOF
+
+如让用户登录必须修改密码
+cat << EOF ｜ldapmodify -x -H ldapi:/// -D cn=config -W
+dn: uid=jjp,ou=people,dc=zzb,dc=hj
+changetype: modify
+delete: pwdAccountLockedTime
+EOF
