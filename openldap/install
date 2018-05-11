@@ -400,7 +400,7 @@ lenovo rd640及EMC 5300
 /etc/openldap/ldap.conf 查询openldap服务器所有条目信息
 
 3）安装客户端软件包
-yum install -y openldap-clients nss-pam-ldapd
+yum install -y openldap-clients nss-pam-ldapd authconfig authconfig-gtk
 
 修改/etc/nslcd.conf配置文件 
 uri ldap://ldap.zzb.hj
@@ -426,7 +426,7 @@ authconfig --restorebackup=systemconfig.bak #指定恢复文件
 authconfig --restorelastbackup #恢复上一次备份
 
 将当前系统加入openldap服务端中
-authconfig --enablemkhomedir --disableldaptls --enableldap --enableldapauth --ldapserver=ldap://ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --updateall
+authconfig --enableldap --enableldapauth --enablemkhomedir --enableforcelegacy --disablesssd --disablesssdauth --disableldaptls  --enablelocauthorize  --ldapserver=ldap://ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --update
 
 id user1
 
