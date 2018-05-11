@@ -348,3 +348,85 @@ dn: uid=jjp,ou=people,dc=zzb,dc=hj
 changetype: modify
 delete: pwdAccountLockedTime
 EOF
+
+验证openldap服务器的身份
+ldapwhoami -x -D "uid=jjp,ou=people,dc=zzb,dc=hj" -W -H ldapi:///
+
+修改目录树中RDN条目
+ldapmodrdn -x -D "cn=Manager,dc=zzb,dc=hj" -W -H ldapi:/// "uid=user1,ou=people,dc=zzb,dc=hj" uid=user6
+
+由于没有使用-r选项，原来的uid条目不会删除。可使用ldapmodify删除
+cat << EOF | ldapmodify -x -D "cn=Manager,dc=zzb,dc=hj" -W -H ldapi:/// 
+dn: uid=user6,ou=people,dc=zzb,dc=hj
+changetype: modify
+delete: uid
+uid: user1
+EOF
+
+判断目录树中DN值和指定的值是否相同
+ldapcompare -x -D "cn=Manager,dc=zzb,dc=hj" -W -H ldapi:/// "uid=user1,ou=people,dc=zzb,dc=hj" "uid:user2"
+
+重置密码
+ldappasswd -x -D "cn=Manager,dc=zzb,dc=hj" -W -H ldapi:/// "uid=user1,ou=people,dc=zzb,dc=hj" -S
+
+-S 提示用户输入新密码
+-A 提示输入旧密码，自动生成新密码
+
+检测配置文件及数据库文件的可用性
+slaptest -f /etc/openldap/slapd.conf -F /etc/openldap/slapd.d/
+
+-f 检测指定的配置文件
+-F 检测指定的数据库目录
+
+创建索引(使用方法同上)
+slapindex 
+
+将数据条目转换成ldif文件
+slapcat -v -l openldap.ldif
+
+-v 输出详细信息
+-l 指定ldif文件
+
+14、客户端配置
+
+1）服务器、存储web控制集成
+lenovo rd640及EMC 5300
+
+2) unix系统（以RHEL 5.x、6.x、7.x为例）
+/etc/nsswitch.conf 名称转换服务
+/etc/sysconfig/authconfig 身份验证LDAP功能
+/etc/pam.d/system-auth 用户账号身份验证
+/etc/pam_ldap.conf 客户端与服务端交互（5.x 不需要）
+/etc/openldap/ldap.conf 查询openldap服务器所有条目信息
+
+3）安装客户端软件包
+yum install -y openldap-clients nss-pam-ldapd
+
+修改/etc/nslcd.conf配置文件 
+uri ldap://ldap.zzb.hj
+base dc=zzb,dc=hj
+ssl no
+tls_cacertdir /etc/openldap/cacerts
+
+修改/etc/pam_ldap.conf
+uri ldap://ldap.zzb.hj
+ssl no
+tls_cacertdir /etc/openldap/cacerts
+bind_policy soft
+
+修改/etc/pam.d/system-auth
+
+4）命令行部署客户端
+
+使用authconfig备份系统文件
+authconfig --savebackup=systemconfig.bak
+
+使用authconfig恢复初始配置参数
+authconfig --restorebackup=systemconfig.bak #指定恢复文件
+authconfig --restorelastbackup #恢复上一次备份
+
+将当前系统加入openldap服务端中
+authconfig --enablemkhomedir --disableldaptls --enableldap --enableldapauth --ldapserver=ldap://ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --updateall
+
+id user1
+
