@@ -227,21 +227,16 @@ ldapdelete -x -W -D 'cn=Manager,dc=zzb,dc=hj' "uid=ldapuser1,ou=People,dc=zzb,dc
 ldapdelete -x -W -D 'cn=Manager,dc=zzb,dc=hj' "cn=ldapuser1,ou=Group,dc=zzb,dc=hj" 
 
 8、配置 LDAP 客户端，实现网络用户信息共享
+yum install -y openldap-clients nss-pam-ldapd authconfig authconfig-gtk
 
-首先安装必要包：
-yum install -y openldap-clients nss-pam-ldapd authconfig authconfig-gtk 
+将当前系统加入openldap服务端中
+authconfig --enableldap --enableldapauth --enablemkhomedir --enableforcelegacy --disablesssd --disablesssdauth --disableldaptls  --enablelocauthorize  --ldapserver=ldap://ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --update
 
-authconfig --enableldap \  
-  --enableldapauth \  
-  --ldapserver=192.168.0.201 \  
-  --ldapbasedn="dc=zzb,dc=hj" \  
-  --enablemkhomedir \  
-  --update  
 
   之后就可以在任何一台机器上，使用 LDAP 用户登录客户端了
 
 9、查询 LDAP 用户信息
-ldapsearch -x -b "dc=zzb,dc=hj" -H ldap://192.168.137.48
+ldapsearch -x -b "dc=zzb,dc=hj" -H ldap://ldap.zzb.hj
 
 10、安装 phpLDAPadmin
 安装 phpLDAPadmin 需要 LAMP 环境
