@@ -233,7 +233,7 @@ yum install -y openldap-clients nss-pam-ldapd authconfig authconfig-gtk
 authconfig --enableldap --enableldapauth --enablemkhomedir --enableforcelegacy --disablesssd --disablesssdauth --disableldaptls  --enablelocauthorize  --ldapserver=ldap://ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --update
 
 
-  之后就可以在任何一台机器上，使用 LDAP 用户登录客户端了
+之后就可以在任何一台机器上，使用 LDAP 用户登录客户端了
 
 9、查询 LDAP 用户信息
 ldapsearch -x -b "dc=zzb,dc=hj" -H ldap://ldap.zzb.hj
@@ -259,7 +259,7 @@ Alias /ldapadmin /usr/share/phpldapadmin/htdocs
     # Apache 2.4  
     Require local  
     # 追加内容，设置允许访问 phpLDAPadmin 的 IP 段  
-    Require ip 192.168.0.0/16  
+    Require ip 192.168.0.0/24  
 
 重新启动 Apache
 systemctl restart httpd  
@@ -305,7 +305,7 @@ olcDbIndex: sn pres,eq,sub
 EOF
 
 ldapmodify -Q -Y EXTERNAL -H ldapi:/// -f hdb-index.ldif
-ldapsearch -Q -LLL -Y EXTERNAL -H ldapi:/// -b cn=config '(olcDatabase={2}hdb)' olcDbIndex ｜grep -i 'sn'
+ldapsearch -Q -LLL -Y EXTERNAL -H ldapi:/// -b cn=config '(olcDatabase={2}hdb)' olcDbIndex |grep -i 'sn'
 
 13、常用命令
 
@@ -492,17 +492,15 @@ cat ~/sudo/sudo-config.ldif | ldapadd -Y EXTERNAL -H ldapi:///
 ldapsearch -LLLY EXTERNAL -H ldapi:/// -b cn={13}sudo,cn=schema,cn=config |grep NAME |awk '{print $4,$5 }' |sort
 
 5）在openldap目录树中建立suders条目
-cat << EOF| ldapadd -D "cn=Manager,dc=zzb,dc=hj" -h ldap.zzb.hj -x -W
+cat << EOF | ldapadd -D "cn=Manager,dc=zzb,dc=hj" -h ldap.zzb.hj -x -W
 dn: ou=sudoers,dc=zzb,dc=hj
-objectClass: top
-objectClass: organizationlUnit
+objectClass: organizationalUnit
 ou: sudoers
 
 dn: cn=defaults,ou=sudoers,dc=zzb,dc=hj
-objectClass: top
 objectClass: sudoRole
 cn: defaults
-description: "Default sudoOption's go here"
+description: Default sudoOption's go here
 sudoOption: requiretty
 sudoOption: !visiblepw
 sudoOption: always_set_home
@@ -515,10 +513,8 @@ sudoOption: env_keep+="LC_TIME LC_ALL LANGUAGE LINGUAS _XKB_CHARSET XAUTHORITY"
 sudoOption: secure_path=/sbin:/bin:/usr/sbin:/usr/bin
 
 dn: cn=%dba,ou=sudoers,dc=zzb,dc=hj
-objectClass: top
 objectClass: sudoRole
 cn: %dba
-sudoUser: %dba
 sudoHost: ALL
 sudoRunAsUser: oracle
 sudoRunAsUser: grid
@@ -526,7 +522,6 @@ sudoOption: !authenticate
 sudoCommand: /bin/bash
 
 dn: cn=%app,ou=sudoers,dc=zzb,dc=hj
-objectClass: top
 objectClass: sudoRole
 cn: %app
 sudoUser: %app
@@ -536,7 +531,6 @@ sudoOption: !authenticate
 sudoCommand: /bin/bash
 
 dn: cn=%admin,ou=sudoers,dc=zzb,dc=hj
-objectClass: top
 objectClass: sudoRole
 cn: %admin
 sudoUser: %admin
@@ -554,7 +548,7 @@ sudoCommand: /sbin/*remove
 sudoCommand: /usr/bin/chattr
 sudoCommand: /sbin/mkfs*
 sudoCommand: !/usr/bin/passwd
-sudoOrder: 0
+sudoCommand: 0
 
 dn: cn=%limit,ou=sudoers,dc=zzb,dc=hj
 objectClass: top
@@ -566,3 +560,68 @@ sudoOption: !authenticate
 sudoRunAsUser: ALL
 sudoUser: %limit
 EOF
+
+6) add user to app and manager of groups
+cat << EOF | ldapadd -D "cn=Manager,dc=zzb,dc=hj" -h ldap.zzb.hj -x -W
+dn: cn=app,ou=Group,dc=zzb,dc=hj
+objectClass: posixGroup
+cn: app
+gidNumber: 10005
+
+dn: cn=manager,ou=Group,dc=zzb,dc=hj
+objectClass: posixGroup
+cn: manager
+gidNumber: 10006
+
+dn: uid=gxc,ou=People,dc=zzb,dc=hj
+objectClass: account
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: gxc
+uid: gxc
+uidNumber: 20006
+gidNumber: 10005
+userPassword: gxc@123!
+homeDirectory: /home/gxc
+loginShell: /bin/bash
+
+dn: uid=ly,ou=People,dc=zzb,dc=hj
+objectClass: account
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: ly
+uid: ly
+uidNumber:20007
+gidNumber:10006
+userPassword: ly@123!
+homeDirectory: /home/ly
+loginShell: /bin/bash
+
+dn: uid=jjp,ou=People,dc=zzb,dc=hj
+objectClass: account
+objectClass: posixAccount
+objectClass: shadowAccount
+cn: jjp
+uid: jjp
+uidNumber:20008
+gidNumber:10006
+userPassword: jjpWbgsnmm1@#
+homeDirectory: /home/jjp
+loginShell: /bin/bash
+EOF
+
+7) client
+
+rpm -qi sudo | grep -i version ( >1.7.4p5 ,or must be update)
+
+将当前系统加入openldap服务端中
+authconfig --enableldap --enableldapauth --enablemkhomedir --enableforcelegacy --disablesssd --disablesssdauth --disableldaptls  --enablelocauthorize  --ldapserver=ldap://ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --update
+
+cat >> /etc/nsswitch.conf << EOF
+sudoers:    ldap files
+EOF
+
+cat >> /etc/sudo-ldap.conf <<EOF
+SUDOERS_BASE ou=sudoers,dc=zzb,dc=hj
+EOF
+
