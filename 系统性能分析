@@ -123,6 +123,9 @@ yum install -y gcc systemtap systemtap-runtime kernel-debug kernel-devel kernel-
  1是完全响应，不管自己资源还有多少
  2是不允许超过设置，swap+RAM*("/proc/sys/vm/overcommit_ratio"/100)
 
+7、cgroup
+
+yum install -y libcgroup
 
 
 

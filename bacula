@@ -1,0 +1,73 @@
+1、安装bacula控制器
+yum install -y bacula-director.x86_64 mysql-server
+
+or centos 7
+yum install -y bacula-director.x86_64 mairadb
+
+ll /usr/libexec/bacula/
+-rwxr-xr-x 1 root root   741 Nov 20  2015 create_bacula_database
+-rwxr-xr-x 1 root root   291 Nov 20  2015 create_mysql_database
+-rwxr-xr-x 1 root root  1650 Nov 20  2015 create_postgresql_database
+-rwxr-xr-x 1 root root   271 Nov 20  2015 create_sqlite3_database
+-rwxr-xr-x 1 root root   106 Nov 20  2015 delete_catalog_backup
+-rwxr-xr-x 1 root root   748 Nov 20  2015 drop_bacula_database
+-rwxr-xr-x 1 root root   744 Nov 20  2015 drop_bacula_tables
+-rwxr-xr-x 1 root root   295 Nov 20  2015 drop_mysql_database
+-rwxr-xr-x 1 root root  1178 Nov 20  2015 drop_mysql_tables
+-rwxr-xr-x 1 root root   233 Nov 20  2015 drop_postgresql_database
+-rwxr-xr-x 1 root root   860 Nov 20  2015 drop_postgresql_tables
+-rwxr-xr-x 1 root root   146 Nov 20  2015 drop_sqlite3_database
+-rwxr-xr-x 1 root root   154 Nov 20  2015 drop_sqlite3_tables
+-rwxr-xr-x 1 root root   782 Nov 20  2015 grant_bacula_privileges
+-rwxr-xr-x 1 root root   614 Nov 20  2015 grant_mysql_privileges
+-rwxr-xr-x 1 root root  2557 Nov 20  2015 grant_postgresql_privileges
+-rwxr-xr-x 1 root root   110 Nov 20  2015 grant_sqlite3_privileges
+-rwxr-xr-x 1 root root   752 Nov 20  2015 make_bacula_tables
+-rwxr-xr-x 1 root root  4259 Nov 20  2015 make_catalog_backup.pl
+-rwxr-xr-x 1 root root 13796 Nov 20  2015 make_mysql_tables
+-rwxr-xr-x 1 root root 14368 Nov 20  2015 make_postgresql_tables
+-rwxr-xr-x 1 root root 13610 Nov 20  2015 make_sqlite3_tables
+-rwxr-xr-x 1 root root   757 Nov 20  2015 update_bacula_tables
+-rwxr-xr-x 1 root root  1572 Nov 20  2015 update_mysql_tables
+-rwxr-xr-x 1 root root  1609 Nov 20  2015 update_postgresql_tables
+-rwxr-xr-x 1 root root  1366 Nov 20  2015 update_sqlite3_tables
+
+grant_mysql_privileges 分配数据库权限
+create_mysql_database 创建数据库
+make_mysql_tables 创建数据表
+
+如果数据库设置了密码，使用-p参数
+
+grant all privileges on bacula.* to bacula@localhost identified by 'baculadb';
+flush privileges;
+
+/etc/bacula/bacula-dir.conf
+这个配置文件由Director、Catalog、Messages、Console、Storage、Pool、Counter、Fileset、Schedule、JobDefs、Job等组成
+
+Director {                            # define myself
+  Name = bacula-dir
+  DIRport = 9101                # where we listen for UA connections
+  QueryFile = "/etc/bacula/query.sql"
+  WorkingDirectory = "/var/spool/bacula"
+  PidDirectory = "/var/run"
+  Maximum Concurrent Jobs = 1
+  Password = "@@DIR_PASSWORD@@"         # Console password
+  Messages = Daemon
+}
+
+Catalog {
+  Name = MyCatalog
+# Uncomment the following line if you want the dbi driver
+# dbdriver = "dbi:postgresql"; dbaddress = 127.0.0.1; dbport =
+  dbdriver = "dbi:mysql"; dbaddress = 127.0.0.1; dbport = 3306
+  dbname = "bacula"; dbuser = "bacula"; dbpassword = "baculadb"
+}
+
+# Message delivery for daemon messages (no job).
+Messages {
+  Name = Daemon
+  mailcommand = "/usr/sbin/bsmtp -h localhost -f \"\(Bacula\) \<%r\>\" -s \"Bacula daemon message\" %r"
+  mail = root@localhost = all, !skipped
+  console = all, !skipped, !saved
+  append = "/var/log/bacula/bacula.log" = all, !skipped
+}
