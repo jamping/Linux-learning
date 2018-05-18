@@ -1,0 +1,170 @@
+1) install the openssl
+rpm -qa |grep openssl
+yun install -y openssl*
+
+2) generate the ca private key
+cd /etc/pik/CA
+(umask 077; openssl genrsa -out private/cakey.pem 2048)
+
+3) generate the public key of CA
+openssl req -new -x509 -key private/cakey.pem -out cacert.pem -days 3650
+
+4) create database and serial file 
+touch serial index.txt
+echo "01" > serial
+
+5) get info of the CA
+openssl x509 -noout -text -in /etc/pki/CA/cacert.pem
+
+6) get certs of openldap 
+cd /etc/openldap/ssl
+(umask 077; openssl genrsa -out ldapkey.pem 1024)
+
+7) request to CA
+openssl req -new -key ldapkey.pem -out ldap.csr -days 3650
+
+8) CA verify and sign the cert
+openssl ca -in ldap.csr -out ldapcert.pem -days 3650
+
+
+Create SSL Certificates
+  	Create own-created SSL Certificates. However, If you use your server as a business, it had better buy and use a Formal Certificate from Verisigh and so on.
+[root@www ~]# cd /etc/pki/tls/certs
+
+[root@www certs]# make ldap.key
+
+umask 77 ; \
+/usr/bin/openssl genrsa -aes128 2048 > ldap.key
+Generating RSA private key, 2048 bit long modulus
+...
+...
+e is 65537 (0x10001)
+
+Enter pass phrase:# set passphrase
+
+Verifying - Enter pass phrase:# confirm
+# remove passphrase from private key
+
+[root@www certs]# openssl rsa -in ldap.key -out ldap.key
+
+Enter pass phrase for ldap.key:# input passphrase
+
+writing RSA key
+[root@www certs]# make ldap.csr
+
+umask 77 ; \
+/usr/bin/openssl req -utf8 -new -key ldap.key -out ldap.csr
+You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+-----
+
+Country Name (2 letter code) [XX]:JP
+# country
+
+State or Province Name (full name) []:Hiroshima
+  # state
+
+Locality Name (eg, city) [Default City]:Hiroshima
+# city
+
+Organization Name (eg, company) [Default Company Ltd]:GTS
+  # company
+
+Organizational Unit Name (eg, section) []:Server World
+  # department
+
+Common Name (eg, your name or your server's hostname) []:www.srv.world
+  # server's FQDN
+
+Email Address []:xxx@srv.world
+# email address
+
+Please enter the following 'extra' attributes
+to be sent with your certificate request
+A challenge password []:# Enter
+
+An optional company name []:# Enter
+[root@www certs]# openssl x509 -in ldap.csr -out ldap.crt -req -signkey ldap.key -days 3650
+
+Signature ok
+subject=/C=JP/ST=Hiroshima/L=Hiroshima/O=GTS/OU=Server World/CN=www.srv.world/emailAddress=xxx@srv.world
+Getting Private key 
+
+Configure LDAP Server.
+[root@dlp ~]# cp /etc/pki/tls/certs/ldap.key \
+/etc/pki/tls/certs/ldap.crt \
+/etc/pki/tls/certs/ca-bundle.crt \
+/etc/openldap/certs/
+
+[root@dlp ~]# chown ldap. /etc/openldap/certs/ldap.key \
+/etc/openldap/certs/ldap.crt \
+/etc/openldap/certs/ca-bundle.crt
+[root@dlp ~]# vi mod_ssl.ldif
+# create new
+dn: cn=config
+changetype: modify
+add: olcTLSCACertificateFile
+olcTLSCACertificateFile: /etc/openldap/certs/ca-bundle.crt
+-
+replace: olcTLSCertificateFile
+olcTLSCertificateFile: /etc/openldap/certs/ldap.crt
+-
+replace: olcTLSCertificateKeyFile
+olcTLSCertificateKeyFile: /etc/openldap/certs/ldap.key
+
+[root@dlp ~]# ldapmodify -Y EXTERNAL -H ldapi:/// -f mod_ssl.ldif
+
+SASL/EXTERNAL authentication started
+SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
+SASL SSF: 0
+modifying entry "cn=config"
+
+[root@dlp ~]# vi /etc/sysconfig/slapd
+# line 9: add
+
+SLAPD_URLS="ldapi:/// ldap:/// ldaps:///
+"
+[root@dlp ~]# systemctl restart slapd
+
+[3] 	Configure LDAP Client for TLS connection.
+[root@www ~]# 
+echo "TLS_REQCERT allow" >> /etc/openldap/ldap.conf
+echo "tls_reqcert allow" >> /etc/nslcd.conf
+
+[root@www ~]# authconfig --enableldaptls --update
+
+getsebool: SELinux is disabled
+[root@www ~]# exit
+
+logout
+CentOS Linux 7 (Core)
+Kernel 3.10.0-123.20.1.el7.x86_64 on an x86_64
+www login: redhat
+
+Password:
+Last login: Tue Aug 19 19:55:52 on ttyS0
+[redhat@www ~]$ # logined normally
+
+
+phpLDAPadmin ssl
+
+a)
+mkdir /etc/httpd/ssl
+cd /etc/httpd/ssl
+(umask 077; openssl genrsa -out httpd.key 1024)
+
+b)
+openssl req -new -key httpd.key -out httpd.csr -days 3650
+
+c)
+openssl ca -in httpd.csr -out httpd.crt -days 3650
+
+d)
+cat /etc/pki/CA/index.txt
+
+rpm -qa |grep mod_ssl
+
