@@ -1,8 +1,8 @@
 1、安装bacula控制器
-yum install -y bacula-director.x86_64 mysql-server
+yum install -y bacula-director bacula-storage bacula-console 
 
-or centos 7
-yum install -y bacula-director.x86_64 mairadb
+2、Add Database for Bacula to MariaDB. 
+alternatives --config libbaccats.so
 
 ll /usr/libexec/bacula/
 -rwxr-xr-x 1 root root   741 Nov 20  2015 create_bacula_database
@@ -37,37 +37,165 @@ create_mysql_database 创建数据库
 make_mysql_tables 创建数据表
 
 如果数据库设置了密码，使用-p参数
+/usr/libexec/bacula/grant_mysql_privileges -p
+/usr/libexec/bacula/create_mysql_database -p
+/usr/libexec/bacula/make_mysql_tables -p 
 
 grant all privileges on bacula.* to bacula@localhost identified by 'baculadb';
 flush privileges;
 
+3、Configure Bacula Director. 
+
 /etc/bacula/bacula-dir.conf
 这个配置文件由Director、Catalog、Messages、Console、Storage、Pool、Counter、Fileset、Schedule、JobDefs、Job等组成
 
-Director {                            # define myself
+vi /etc/bacula/bacula-dir.conf
+Director {
   Name = bacula-dir
-  DIRport = 9101                # where we listen for UA connections
+  DIRport = 9101
   QueryFile = "/etc/bacula/query.sql"
   WorkingDirectory = "/var/spool/bacula"
   PidDirectory = "/var/run"
   Maximum Concurrent Jobs = 1
-  Password = "@@DIR_PASSWORD@@"         # Console password
+  # line 22: set Director daemon's password
+  Password = "password"
   Messages = Daemon
 }
+FileSet {
+  Name = "Full Set"
+  Include {
+    Options {
+       signature = MD5
+       # line 94: add
+       Compression = GZIP
+    }
+   # line 110: backup target directory on Client Host
+   File = /home
+  }
+Client {
+  Name = bacula-fd
+  # line 158: Backup target Hostname or IP address
+  Address = 192.168.137.167
 
+  FDPort = 9102
+  Catalog = MyCatalog
+  # line 161: specify File daemon's password
+  Password = "password"
+  File Retention = 30 days
+  Job Retention = 6 months
+  AutoPrune = yes
+}
+Storage {
+  Name = File
+  # line 187: Storage daemon's Hostname or IP address
+  Address = 192.168.137.48
+
+  SDPort = 9103
+  # line 189: specify Storage daemon's password
+  Password = "password"
+  Device = FileStorage
+  Media Type = File
+}
 Catalog {
   Name = MyCatalog
-# Uncomment the following line if you want the dbi driver
-# dbdriver = "dbi:postgresql"; dbaddress = 127.0.0.1; dbport =
-  dbdriver = "dbi:mysql"; dbaddress = 127.0.0.1; dbport = 3306
+  # Uncomment the following line if you want the dbi driver
+  # dbdriver = "dbi:sqlite3"; dbaddress = 127.0.0.1; dbport =
+  # line 236: MariaDB Bacula user's password
+  dbdriver = "dbi:mysql"; dbaddress = localhost; dbport = 3306 
   dbname = "bacula"; dbuser = "bacula"; dbpassword = "baculadb"
 }
+Pool {
+  Name = Default
+  Pool Type = Backup
+  Recycle = yes
+  AutoPrune = yes
+  # line 286: terms of keeping volumes
+  Volume Retention = 180 days
+  # line 287: set 1 volume for 1 job
+  Maximum Volume Jobs = 1
 
-# Message delivery for daemon messages (no job).
-Messages {
-  Name = Daemon
-  mailcommand = "/usr/sbin/bsmtp -h localhost -f \"\(Bacula\) \<%r\>\" -s \"Bacula daemon message\" %r"
-  mail = root@localhost = all, !skipped
-  console = all, !skipped, !saved
-  append = "/var/log/bacula/bacula.log" = all, !skipped
+  # line 288: the header for volumes if no volumes to use and make new volume automatically
+  Label Format = Vol-
 }
+# line 312-316: comment out
+
+#Console {
+#Name = bacula-mon
+#Password = "@@MON_DIR_PASSWORD@@"
+#CommandACL = status, .status
+#} 
+
+vi /etc/bacula/bconsole.conf
+Director {
+  Name = bacula-dir
+  DIRport = 9101
+  # Director daemon's Hostname or IP address
+  address = 192.168.137.48
+
+  # specify Director daemon's password
+  Password = "password"
+} 
+
+vi /usr/libexec/bacula/make_catalog_backup.pl
+# line 109: add
+
+exec("HOME='$wd' mysqldump -f -u$args{db_user} -p$args{db_password} --opt $args{db_name} > '$wd/$args{db_name}.sql'"); 
+
+systemctl start bacula-dir
+systemctl enable bacula-dir 
+
+vi /etc/bacula/bacula-sd.conf
+Director {
+  Name = bacula-dir
+  # line 26: set Storage daemon's password
+  Password = "password"
+}
+# line 33-37: comment out
+
+#Director {
+#Name = bacula-mon
+#Password = "@@MON_SD_PASSWORD@@"
+#Monitor = yes
+#}
+
+systemctl start bacula-sd
+systemctl enable bacula-sd 
+
+4、Install File componet on Bacula Client. 
+
+yum -y install bacula-client bacula-console 
+
+Configure Bacula File. 
+vi /etc/bacula/bacula-fd.conf
+Director {
+  Name = bacula-dir
+  # line 15: specify Director daemon's password
+
+  Password = "password"
+}
+# line 22-26: comment out
+
+#Director {
+#Name = bacula-mon
+#Password = "@@MON_FD_PASSWORD@@"
+#Monitor = yes
+#}
+
+vi /etc/bacula/bconsole.conf
+Director {
+  Name = bacula-dir
+  DIRport = 9101
+  # Director daemon's Hostname or IP address
+  address = 192.168.137.48
+  # specify Director daemon's password
+  Password = "password"
+} 
+
+systemctl start bacula-fd
+systemctl enable bacula-fd 
+
+firewall-cmd --add-port=9101/tcp --permanent
+firewall-cmd --reload
+
+firewall-cmd --add-port=9102/tcp --permanent
+firewall-cmd --reload
