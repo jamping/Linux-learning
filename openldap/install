@@ -626,5 +626,31 @@ uri ldap://ldap.zzb.hj
 sudoers_base ou=sudoers,dc=zzb,dc=hj
 EOF
 
+8) ftp
+vi /etc/pam.d/vsftpd
 
+auth required /lib64/security/pam_ldap.so
+account required /lib64/security/pam_ldap.so
+password required /lib64/security/pam_ldap.so
+
+9) samba
+
+a) rpm -qa |grep samba
+yum install -y samba
+
+b) def the share info
+cat >> /etc/samba/smb.conf << EOF
+[test-share]
+    path = /opt/share
+    comment = Security Directory
+    writable = no
+    guest ok = yes
+EOF
+
+c)
+systemctl start smb nmb
+systemctl enable smb nmb
+
+firewall-cmd --add-service=samba --permanent
+firewall-cmd --reload 
 

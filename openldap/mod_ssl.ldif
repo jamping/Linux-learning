@@ -1,0 +1,11 @@
+# create new
+dn: cn=config
+changetype: modify
+add: olcTLSCACertificateFile
+olcTLSCACertificateFile: /etc/openldap/certs/ca-bundle.crt
+-
+replace: olcTLSCertificateFile
+olcTLSCertificateFile: /etc/openldap/certs/ldap.crt
+-
+replace: olcTLSCertificateKeyFile
+olcTLSCertificateKeyFile: /etc/openldap/certs/ldap.key

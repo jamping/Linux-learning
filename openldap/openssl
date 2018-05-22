@@ -29,9 +29,10 @@ openssl ca -in ldap.csr -out ldapcert.pem -days 3650
 
 Create SSL Certificates
   	Create own-created SSL Certificates. However, If you use your server as a business, it had better buy and use a Formal Certificate from Verisigh and so on.
-[root@www ~]# cd /etc/pki/tls/certs
 
-[root@www certs]# make ldap.key
+a)
+cd /etc/pki/tls/certs
+make ldap.key
 
 umask 77 ; \
 /usr/bin/openssl genrsa -aes128 2048 > ldap.key
@@ -39,18 +40,17 @@ Generating RSA private key, 2048 bit long modulus
 ...
 ...
 e is 65537 (0x10001)
-
 Enter pass phrase:# set passphrase
-
 Verifying - Enter pass phrase:# confirm
+
+b)
 # remove passphrase from private key
+openssl rsa -in ldap.key -out ldap.key
 
-[root@www certs]# openssl rsa -in ldap.key -out ldap.key
+Enter pass phrase for ldap.key:# input passphrase writing RSA key
 
-Enter pass phrase for ldap.key:# input passphrase
-
-writing RSA key
-[root@www certs]# make ldap.csr
+c)
+make ldap.csr
 
 umask 77 ; \
 /usr/bin/openssl req -utf8 -new -key ldap.key -out ldap.csr
@@ -62,25 +62,25 @@ For some fields there will be a default value,
 If you enter '.', the field will be left blank.
 -----
 
-Country Name (2 letter code) [XX]:JP
+Country Name (2 letter code) [XX]:CN
 # country
 
-State or Province Name (full name) []:Hiroshima
+State or Province Name (full name) []:beijing
   # state
 
-Locality Name (eg, city) [Default City]:Hiroshima
+Locality Name (eg, city) [Default City]:beijing
 # city
 
-Organization Name (eg, company) [Default Company Ltd]:GTS
+Organization Name (eg, company) [Default Company Ltd]:zzb.hj
   # company
 
-Organizational Unit Name (eg, section) []:Server World
+Organizational Unit Name (eg, section) []:xxzx
   # department
 
-Common Name (eg, your name or your server's hostname) []:www.srv.world
+Common Name (eg, your name or your server's hostname) []:ldap.zzb.hj
   # server's FQDN
 
-Email Address []:xxx@srv.world
+Email Address []:xxx@mail.zzb.hj
 # email address
 
 Please enter the following 'extra' attributes
@@ -88,22 +88,28 @@ to be sent with your certificate request
 A challenge password []:# Enter
 
 An optional company name []:# Enter
-[root@www certs]# openssl x509 -in ldap.csr -out ldap.crt -req -signkey ldap.key -days 3650
+
+d)
+openssl x509 -in ldap.csr -out ldap.crt -req -signkey ldap.key -days 3650
 
 Signature ok
-subject=/C=JP/ST=Hiroshima/L=Hiroshima/O=GTS/OU=Server World/CN=www.srv.world/emailAddress=xxx@srv.world
+subject=/C=CN/ST=beijing/L=beijing/O=zzb.hj/OU=xxzx/CN=ldap.zzb.hj/emailAddress=xxx@mail.zzb.hj
 Getting Private key 
 
-Configure LDAP Server.
-[root@dlp ~]# cp /etc/pki/tls/certs/ldap.key \
+e)Configure LDAP Server.
+
+e1)
+cp /etc/pki/tls/certs/ldap.key \
 /etc/pki/tls/certs/ldap.crt \
 /etc/pki/tls/certs/ca-bundle.crt \
 /etc/openldap/certs/
 
-[root@dlp ~]# chown ldap. /etc/openldap/certs/ldap.key \
+chown ldap. /etc/openldap/certs/ldap.key \
 /etc/openldap/certs/ldap.crt \
 /etc/openldap/certs/ca-bundle.crt
-[root@dlp ~]# vi mod_ssl.ldif
+
+e2)
+vi mod_ssl.ldif
 # create new
 dn: cn=config
 changetype: modify
@@ -116,41 +122,31 @@ olcTLSCertificateFile: /etc/openldap/certs/ldap.crt
 replace: olcTLSCertificateKeyFile
 olcTLSCertificateKeyFile: /etc/openldap/certs/ldap.key
 
-[root@dlp ~]# ldapmodify -Y EXTERNAL -H ldapi:/// -f mod_ssl.ldif
+e3)
+ldapmodify -Y EXTERNAL -H ldapi:/// -f mod_ssl.ldif
 
 SASL/EXTERNAL authentication started
 SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
 SASL SSF: 0
 modifying entry "cn=config"
 
-[root@dlp ~]# vi /etc/sysconfig/slapd
+e4)
+vi /etc/sysconfig/slapd
 # line 9: add
 
-SLAPD_URLS="ldapi:/// ldap:/// ldaps:///
-"
-[root@dlp ~]# systemctl restart slapd
+SLAPD_URLS="ldapi:/// ldap:/// ldaps:///"
 
-[3] 	Configure LDAP Client for TLS connection.
-[root@www ~]# 
+e5)
+systemctl restart slapd
+
+f) Configure LDAP Client for TLS connection.
+
 echo "TLS_REQCERT allow" >> /etc/openldap/ldap.conf
 echo "tls_reqcert allow" >> /etc/nslcd.conf
 
-[root@www ~]# authconfig --enableldaptls --update
+authconfig --enableldaptls --update
 
-getsebool: SELinux is disabled
-[root@www ~]# exit
-
-logout
-CentOS Linux 7 (Core)
-Kernel 3.10.0-123.20.1.el7.x86_64 on an x86_64
-www login: redhat
-
-Password:
-Last login: Tue Aug 19 19:55:52 on ttyS0
-[redhat@www ~]$ # logined normally
-
-
-phpLDAPadmin ssl
+g) phpLDAPadmin ssl
 
 a)
 mkdir /etc/httpd/ssl
@@ -167,4 +163,36 @@ d)
 cat /etc/pki/CA/index.txt
 
 rpm -qa |grep mod_ssl
+
+e) config the ssl of the web
+
+<VirtualHost *:443>
+  ServerName ldap.zzb.hj
+  DocumentRoot "/usr/share/phpldapadmin/htdocs"
+
+  SSLEngine on
+  SSLProtocol all -SSLv2
+
+  SSLCertificateFile /etc/httpd/ssl/httpd.crt
+  SSLCertificateKeyFile /etc/httpd/ssl/httpd.key
+  SSLCertificateChainFile /etc/pki/CA/cacert.pem
+
+  <Directory /usr/share/phpldapadmin/htdocs>
+    <IfModule mod_authz_core.c>
+        # Apache 2.4
+        Require local
+        Require ip 192.168.0.0/24
+        Require ip 21.114.11.0/24
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        # Apache 2.2
+        Order Deny,Allow
+        Deny from all
+        Allow from 127.0.0.1
+        Allow from ::1
+    </IfModule>
+  </Directory>
+</VirtualHost>
+
+systemctl restart httpd
 
