@@ -1,0 +1,4 @@
+[testserver]
+110 ansible_host=192.168.0.110
+119 ansible_host=192.168.0.119
+122 ansible_host=192.168.0.122

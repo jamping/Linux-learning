@@ -615,7 +615,7 @@ yum install -y openldap-clients nss-pam-ldapd authconfig authconfig-gtk
 rpm -qi sudo | grep -i version ( >1.7.4p5 ,or must be update)
 
 将当前系统加入openldap服务端中
-authconfig --enableldap --enableldapauth --enablemkhomedir --enableforcelegacy --disablesssd --disablesssdauth --disableldaptls  --enablelocauthorize  --ldapserver=ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --update
+authconfig --enableldap --enableldapauth --enablemkhomedir --enableforcelegacy --disablesssd --disablesssdauth --enableldaptls  --enablelocauthorize  --ldapserver=ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --update
 
 cat >> /etc/nsswitch.conf << EOF
 sudoers:    ldap files

@@ -1,0 +1,16 @@
+---
+- name: uninstall ldap client
+  hosts: testserver
+  # use priviledge (default : root)
+  become: yes
+# the way to use priviledge
+  become_method: sudo
+# define tasks
+  tasks:
+    - name: uninstall ldap client
+      yum: name={{ item }} state=absent
+      with_items:
+       - openldap-clients
+       - nss-pam-ldapd
+       - authconfig
+       - authconfig-gtk

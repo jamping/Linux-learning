@@ -1,0 +1,26 @@
+---
+- name: install ldap client
+  hosts: testserver
+  # use priviledge (default : root)
+  become: yes
+# the way to use priviledge
+  become_method: sudo
+# define tasks
+  tasks:
+    - name: install ldap client
+      yum: name={{ item }} state=installed
+      with_items:
+       - openldap-clients
+       - nss-pam-ldapd
+       - authconfig
+       - authconfig-gtk
+    - name: Configure LDAP Client for TLS connection
+      command: echo "tls_reqcert allow" >> /etc/nslcd.conf
+    - name: join the ldap server
+      command: >
+         authconfig --enableldap --enableldapauth --enablemkhomedir --enableforcelegacy
+         --disablesssd --disablesssdauth --enableldaptls --enablelocauthorize
+         --ldapserver=ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --update
+    - name: restart nslcd
+      service: name=nslcd state=restarted
+ 
