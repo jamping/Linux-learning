@@ -8,19 +8,19 @@
 # define tasks
   tasks:
     - name: install ldap client
-      yum: name={{ item }} state=installed
+      yum: name={{ item }} state=present
       with_items:
        - openldap-clients
        - nss-pam-ldapd
        - authconfig
        - authconfig-gtk
     - name: Configure LDAP Client for TLS connection
-      command: echo "tls_reqcert allow" >> /etc/nslcd.conf
+      shell: echo "tls_reqcert allow" >> /etc/nslcd.conf
     - name: join the ldap server
       command: >
          authconfig --enableldap --enableldapauth --enablemkhomedir --enableforcelegacy
          --disablesssd --disablesssdauth --enableldaptls --enablelocauthorize
          --ldapserver=ldap.zzb.hj --ldapbasedn="dc=zzb,dc=hj" --enableshadow --update
     - name: restart nslcd
-      service: name=nslcd state=restarted
+      shell: systemctl restart nslcd
  

@@ -654,3 +654,56 @@ systemctl enable smb nmb
 firewall-cmd --add-service=samba --permanent
 firewall-cmd --reload 
 
+e）rpm -ql samba
+
+f) 
+cp -f /usr/share/doc/samba-4.7.1/LDAP/samba.schema /etc/openldap/schema/
+cp -f /usr/share/doc/samba-4.7.1/LDAP/samba.ldif /etc/openldap/schema/
+restorecon /etc/openldap/schema/samba.schema
+restorecon /etc/openldap/schema/samba.ldif
+
+cd /etc/openldap/schema/  
+ldapadd -Y EXTERNAL -H ldapi:/// -D "cn=config" -f samba.ldif
+
+g) run cmd at samba client
+vi /etc/samba/smb.conf
+
+security = user
+passdb backend = ldapsam:ldap://ldap.zzb.hj
+ldap suffix = "dc=zzb,dc=hj"
+ldap group suffix = "cn=Group"
+ldap user suffix = "ou=People"
+ldap admin dn = "cn=Manager,dc=zzb,dc=hj"
+ldap delete dn = no
+ldap passwd sync = yes
+pam password change = yes
+ldap ssl = on
+
+h) add ldapserver passwd into the secret.db
+smbpasswd -w "password"
+
+smbpasswd -a ly
+
+i) systemctl restart smb nmb
+
+10) Apache
+yum list|grep mod_ldap
+yum install -y mod_ldap
+
+add content
+
+<Directory /var/www/webpy-app/>
+
+  Order deny,allow
+  Deny from all
+
+  AuthType Basic
+  AuthName "Please input you OpenLDAP account and password"
+  AuthBasicProvider ldap
+
+  AuthLDAPURL ldap://ldap.zzb.hj/ou=People,dc=zzb,dc=hj?uid
+  Require valid-user
+  Satisfy any
+
+</Directory>
+
