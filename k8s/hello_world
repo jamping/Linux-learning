@@ -45,6 +45,6 @@ sed -i "s/cgroup-driver=systemd/cgroup-driver=cgroupfs/g" /etc/systemd/system/ku
 
 systemctl daemon-reload && systemctl restart kubelet
 
-firewall-cmd --zone=public --add-port=6443/tcp --permanent && firewall-cmd --zone=public --add-port=10250/tcp --permanent && firewall-cmd --reload
+firewall-cmd --zone=public --add-port={6443/tcp,10250/tcp} --permanent && firewall-cmd --reload
 
-kubeadm reset && systemctl start kubelet && kubeadm init --ignore-preflight-errors=all
+kubeadm reset && systemctl restart kubelet && kubeadm init --ignore-preflight-errors=all

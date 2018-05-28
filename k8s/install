@@ -1,0 +1,213 @@
+搭建步骤
+
+第1-6步是每台服务器都需要的。
+
+1. 升级系统，在命令行运行
+
+yum update -y
+
+2. 关闭防火墙,swap，因为k8s需要运行多个服务在不同的服务器上通讯，需要开放多个端口，简单起见，直接把防火墙关了，不推荐在生产环境这么做。关掉swap，k8s的组件kebelet才可以正常工作。
+
+systemctl disable firewalld
+systemctl stop firewalld
+
+firewall-cmd --zone=public --add-port={6443/tcp,10250/tcp} --permanent && firewall-cmd --reload
+
+swapoff -a
+
+3.安装docker
+yum install -y docker
+systemctl enable docker && systemctl start docker
+
+4.安装kubeadm,kubelet,kubectl
+
+cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
+EOF
+
+setenforce 0  
+
+yum install -y kubelet kubeadm kubectl  
+systemctl enable kubelet && systemctl start kubelet  
+
+5.关闭selinux，因为kubelet目前支持selinux还有点问题
+
+setenforce 0  
+
+打开/etc/sysconfig/selinux文件
+
+vi /etc/sysconfig/selinux  
+
+找到SELINUX那行，改为
+SELINUX=disabled
+保存文件
+
+6.设置net.bridge.bridge-nf-call-iptables为1
+
+cat << EOF > /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+EOF
+
+sysctl --system
+
+7.初始化master，在master的节点上运行
+
+由于网络原因，我们需要提前拉取k8s初始化需要用到的Images，并添加对应的k8s.gcr.io标签
+## 拉取镜像
+docker pull reg.qiniu.com/k8s/kube-apiserver-amd64:v1.10.2
+docker pull reg.qiniu.com/k8s/kube-controller-manager-amd64:v1.10.2
+docker pull reg.qiniu.com/k8s/kube-scheduler-amd64:v1.10.2
+docker pull reg.qiniu.com/k8s/kube-proxy-amd64:v1.10.2
+docker pull reg.qiniu.com/k8s/etcd-amd64:3.1.12
+docker pull reg.qiniu.com/k8s/pause-amd64:3.1
+
+## 添加Tag
+docker tag reg.qiniu.com/k8s/kube-apiserver-amd64:v1.10.2 k8s.gcr.io/kube-apiserver-amd64:v1.10.2
+docker tag reg.qiniu.com/k8s/kube-scheduler-amd64:v1.10.2 k8s.gcr.io/kube-scheduler-amd64:v1.10.2
+docker tag reg.qiniu.com/k8s/kube-controller-manager-amd64:v1.10.2 k8s.gcr.io/kube-controller-manager-amd64:v1.10.2
+docker tag reg.qiniu.com/k8s/kube-proxy-amd64:v1.10.2 k8s.gcr.io/kube-proxy-amd64:v1.10.2
+docker tag reg.qiniu.com/k8s/etcd-amd64:3.1.12 k8s.gcr.io/etcd-amd64:3.1.12
+docker tag reg.qiniu.com/k8s/pause-amd64:3.1 k8s.gcr.io/pause-amd64:3.1
+
+## 在Kubernetes 1.10 中，增加了CoreDNS，如果使用CoreDNS(默认关闭)，则不需要下面三个镜像。
+docker pull reg.qiniu.com/k8s/k8s-dns-sidecar-amd64:1.14.10
+docker pull reg.qiniu.com/k8s/k8s-dns-kube-dns-amd64:1.14.10
+docker pull reg.qiniu.com/k8s/k8s-dns-dnsmasq-nanny-amd64:1.14.10
+
+docker tag reg.qiniu.com/k8s/k8s-dns-sidecar-amd64:1.14.10 k8s.gcr.io/k8s-dns-sidecar-amd64:1.14.10
+docker tag reg.qiniu.com/k8s/k8s-dns-kube-dns-amd64:1.14.10 k8s.gcr.io/k8s-dns-kube-dns-amd64:1.14.10
+docker tag reg.qiniu.com/k8s/k8s-dns-dnsmasq-nanny-amd64:1.14.10 k8s.gcr.io/k8s-dns-dnsmasq-nanny-amd64:1.14.10
+
+Master节点就是运行着控制组件的机器，包括etcd(集群数据库)和API服务(kubectl CLI通讯服务)。
+初始化master节点, 只需随便在一台装过kubeadm的机器上运行如下命令
+
+kubeadm init --kubernetes-version=v1.10.2 --feature-gates=CoreDNS=true --pod-network-cidr=192.168.0.0/16
+
+把上面输出的最后一行 kubeadm join复制保存下来，后面在node节点加入到集群中需要用到
+运行下面的命令初始化kebectl配置文件
+
+To start using your cluster, you need to run the following as a regular user:
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+You can now join any number of machines by running the following on each node
+as root:
+
+kubeadm join 192.168.0.117:6443 --token c8jsl8.2noprwx5ljvezyyb --discovery-token-ca-cert-hash sha256:084277f92c715524cc8e061411577b37f41cdd74da2b245973161af461eb9d9d
+
+8.安装网络插件，以使pod能相互通讯，这里我们安装的是Calico.在master节点运行
+
+kubectl apply -f https://docs.projectcalico.org/v3.0/getting-started/kubernetes/installation/hosted/kubeadm/1.7/calico.yaml
+
+运行以下命令检查kube-dns pod 已经运行，一般需要几十秒
+
+kubectl get pods --all-namespaces
+
+如果输出中有名字以kube-dns的pod状态是Running，说明网络插件已经正常工作，然后就可以把node节点加入到集群
+
+
+#!/bin/bash
+
+version=v1.10.3
+images=(kube-proxy-amd64:${version} kube-scheduler-amd64:${version} kube-controller-manager-amd64:${version} kube-apiserver-amd64:${version} etcd-amd64:3.2.18 pause-amd64:3.1 kubernetes-dashboard-amd64:v1.8.3 k8s-dns-sidecar-amd64:1.14.10 k8s-dns-kube-dns-amd64:1.14.10 k8s-dns-dnsmasq-nanny-amd64:1.14.10)
+
+for imageName in ${images[@]} ; do
+
+  docker pull jjp/$imageName
+  docker tag jjp/$imageName k8s.gcr.io/$imageName
+  docker rmi jjp/$imageName
+
+done
+
+9. 隔离主节点
+
+默认情况下，出于安全的考虑，并不会在主节点上运行pod，如果你想在主节点上运行pod，比如：运行一个单机版的kubernetes集群时，可运行下面的命令：
+
+kubectl taint nodes --all node-role.kubernetes.io/master-
+
+10. 安装kubernates-dashboard
+
+1)生成证书
+
+openssl req -newkey rsa:4096 -nodes -sha256 -keyout ca.key -x509 -days 365 -out ca.crt
+openssl req -newkey rsa:4096 -nodes -sha256 -keyout weishuichao.key -out weishuichao.csr
+openssl x509 -req -in weishuichao.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out weishuichao.crt
+
+2)导入证书到kube-system
+
+kubectl create secret generic kubernetes-dashboard-certs --from-file=/data/cert -n kube-system
+
+3)创建kubernetes-dashboard.yaml
+
+kubectl apply -f /data/k8s/kubernetes-dashboard.yaml
+
+配置在官网的基础上需要加上下面配置ClusterRoleBinding，用以配置权限，这样通过token登陆进去才不至于没有权限
+
+# ------------------- Dashboard ClusterRoleBinding ------------------- #
+
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+name: kubernetes-dashboard
+subjects:
+- kind: ServiceAccount
+name: kubernetes-dashboard
+namespace: kube-system
+roleRef:
+kind: ClusterRole
+name: cluster-admin
+apiGroup: rbac.authorization.k8s.io
+
+kubernetes采用暴露端口的方式使用，增加一下配置
+
+4) 获取kube-system 的secret
+
+kubectl -n kube-system get secret
+
+5) 查看token,这个token 是用于登陆使用的
+
+kubectl -n kube-system describe secret kubernetes-dashboard-token-2qmtr
+
+6) 访问dashboard
+
+https://192.168.2.117:31000 输入令牌，进入dashboard主页
+
+11. 建立机器互信
+
+1) 在每台服务器需要建立主机互信的用户名执行以下命令生成公钥/密钥，默认回车即可
+
+$ ssh-keygen -t rsa
+
+Generating public/private rsa key pair.Enter file in which to save the key (/root/.ssh/id_rsa):Created directory '/root/.ssh'.Enter passphrase (empty for no passphrase):Enter same passphrase again:Your identification has been saved in /root/.ssh/id_rsa.Your public key has been saved in /root/.ssh/id_rsa.pub.The key fingerprint is:0c:1f:76:aa:80:b2:2f:b9:9a:6a:48:96:9d:8f:a1:cc root@cctvyyycns04The key's randomart image is:+--[ RSA 2048]----+| || || . o . || . = + ||. + o S || * + . . ||B.. + . ||+E . . ||Oo. |+-----------------+
+
+2) 互传公钥，第一次需要输入密码，之后就OK了
+
+$ ssh-copy-id -i /root/.ssh/id_rsa.pub root@192.168.0.110
+
+可以看到是在.ssh/下生成了个authorized_keys的文件，记录了能登陆这台服务器的其他服务器的公钥
+
+3) 测试是否能登陆
+
+$ ssh 192.168.0.110
+
+12. 生成join token
+
+kubeadm token create --print-join-command
+
+把Node加入到master中去
+
+kubeadm join 192.168.0.117:6443 --token c8jsl8.2noprwx5ljvezyyb --discovery-token-ca-cert-hash sha256:084277f92c715524cc8e061411577b37f41cdd74da2b245973161af461eb9d9d
+
