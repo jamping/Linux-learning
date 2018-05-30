@@ -12,7 +12,8 @@ systemctl disable firewalld
 systemctl stop firewalld
 
 firewall-cmd --zone=public --add-port={6443/tcp,10250/tcp} --permanent && firewall-cmd --reload
-
+禁用swap文件
+然后需要禁用swap文件，这是Kubernetes的强制步骤。实现它很简单，编辑/etc/fstab文件，注释掉引用swap的行，保存并重启后输入sudo swapoff -a即可。
 swapoff -a
 
 3.安装docker
@@ -31,9 +32,12 @@ repo_gpgcheck=1
 gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
 EOF
 
+禁用swap文件
+然后需要禁用swap文件，这是Kubernetes的强制步骤。实现它很简单，编辑/etc/fstab文件，注释掉引用swap的行，保存并重启后输入sudo swapoff -a即可。
+
 setenforce 0  
 
-yum install -y kubelet kubeadm kubectl  
+yum install -y kubelet kubeadm kubectl
 systemctl enable kubelet && systemctl start kubelet  
 
 5.关闭selinux，因为kubelet目前支持selinux还有点问题
@@ -57,7 +61,21 @@ EOF
 
 sysctl --system
 
-7.初始化master，在master的节点上运行
+7.修改节点的 hostname，因为 kubernetes 是根据 hostname 来标示各节点的。
+
+# Master 节点
+echo "master.localdomain" > /etc/hostname
+echo "10.236.65.125 master.localdomain" >> /etc/hosts
+sysctl kernel.hostname=master.localdomain # 不重启情况下使内核修改生效
+
+8. 修改配置文件
+vi /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+KUBELET_CGROUP_ARGS=cgroupfs
+
+这里要特别强调一下,一定要修改kubelet 和 docker 的驱动为cgroupfs,修改后 reload 一下服务
+systemctl daemon-reload
+
+9.初始化master，在master的节点上运行
 
 由于网络原因，我们需要提前拉取k8s初始化需要用到的Images，并添加对应的k8s.gcr.io标签
 ## 拉取镜像
@@ -106,9 +124,10 @@ Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
 You can now join any number of machines by running the following on each node
 as root:
 
-kubeadm join 192.168.0.117:6443 --token c8jsl8.2noprwx5ljvezyyb --discovery-token-ca-cert-hash sha256:084277f92c715524cc8e061411577b37f41cdd74da2b245973161af461eb9d9d
+kubeadm join 192.168.0.117:6443 --token m8diet.2d2urrqiy4blpyli --discovery-token-ca-cert-hash sha256:084277f92c715524cc8e061411577b37f41cdd74da2b245973161af461eb9d9d
+kubeadm join 192.168.0.201:6443 --token 0e1dt0.bcw3nrivtqqw2s0k --discovery-token-ca-cert-hash sha256:7f576e044fa65b866c6d4cb25f22a48b30b95e3c8a6e99ba579880b3cd9a5741
 
-8.安装网络插件，以使pod能相互通讯，这里我们安装的是Calico.在master节点运行
+10.安装网络插件，以使pod能相互通讯，这里我们安装的是Calico.在master节点运行
 
 kubectl apply -f https://docs.projectcalico.org/v3.0/getting-started/kubernetes/installation/hosted/kubeadm/1.7/calico.yaml
 
@@ -132,13 +151,54 @@ for imageName in ${images[@]} ; do
 
 done
 
-9. 隔离主节点
+11. 隔离主节点
 
 默认情况下，出于安全的考虑，并不会在主节点上运行pod，如果你想在主节点上运行pod，比如：运行一个单机版的kubernetes集群时，可运行下面的命令：
 
 kubectl taint nodes --all node-role.kubernetes.io/master-
 
-10. 安装kubernates-dashboard
+(可选)在非主节点上管理集群
+为了可以在其他电脑上使用kubectl来管理你的集群，可以从主节点上复制管理员 的kubeconfig文件到你的电脑上：
+
+scp root@<master ip>:/etc/kubernetes/admin.conf .
+kubectl --kubeconfig ./admin.conf get nodes
+
+(可选)映射API服务到本地
+如果你想从集群外部连接到API服务，可以使用工具kubectl proxy:
+
+scp root@<master ip>:/etc/kubernetes/admin.conf .
+kubectl --kubeconfig ./admin.conf proxy
+
+这样就可以在本地这样 http://localhost:8001/api/v1 访问到API服务了。
+
+(可选)部署一个微服务
+现在可以测试你新搭建的集群了，Sock Shop就是一个微服务的样本，它体现了在Kubernetes里如何运行和连接一系列的服务。想了解更多关于微服务的内容，请查看GitHub README。
+
+kubectl create namespace sock-shop
+kubectl apply -n sock-shop -f "https://github.com/microservices-demo/microservices-demo/blob/master/deploy/kubernetes/complete-demo.yaml?raw=true"
+
+可以通过以下命令来查看前端服务是否有开放对应的端口：
+kubectl -n sock-shop get svc front-end
+
+可能需要几分钟时间来下载和启用所有的容器，通过kubectl get pods -n sock-shop来获取服务的状态。
+
+卸载socks shop, 只需要在主节点上运行:
+kubectl delete namespace sock-shop
+
+卸载集群
+想要撤销kubeadm做的事，首先要排除节点，并确保在关闭节点之前要清空节点。
+在主节点上运行：
+
+kubectl drain <node name> --delete-local-data --force --ignore-daemonsets
+kubectl delete node <node name>
+
+然后在需要移除的节点上，重置kubeadm的安装状态：
+
+kubeadm reset
+
+如果你想重新配置集群，只需运行kubeadm init或者kubeadm join并使用所需的参数即可。
+
+12. 安装kubernates-dashboard
 
 1)生成证书
 
@@ -185,7 +245,7 @@ kubectl -n kube-system describe secret kubernetes-dashboard-token-2qmtr
 
 https://192.168.2.117:31000 输入令牌，进入dashboard主页
 
-11. 建立机器互信
+13. 建立机器互信
 
 1) 在每台服务器需要建立主机互信的用户名执行以下命令生成公钥/密钥，默认回车即可
 
@@ -203,7 +263,7 @@ $ ssh-copy-id -i /root/.ssh/id_rsa.pub root@192.168.0.110
 
 $ ssh 192.168.0.110
 
-12. 生成join token
+14. 生成join token
 
 kubeadm token create --print-join-command
 
