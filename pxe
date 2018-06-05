@@ -1,0 +1,41 @@
+1) yum install dhcp -y
+
+ip addr
+
+vi /etc/sysconfig/dhcpd
+
+DHCPDARGS=eth0
+
+2) vi /etc/dhcp/dhcpd.conf
+
+allow booting;
+allow bootp;
+option option-128 code 128 = string;
+option option-129 code 129 = text;
+filename "pxelinux.0"
+next-server 192.168.0.117
+ddns-update-style none;
+option domain-name "zzb.hj";
+option domain-name-servers hzdns.zzb.hj;
+defualt-lease-time 600;
+max-lease-time 7200;
+
+subnet 192.168.0.0 netmask 255.255.255.0 {
+	range 192.168.0.150 192.168.0.200;
+	option domain-name-servers hzdns.zzb.hj;
+	option domain-name "zzb.hj";
+	option routers 192.168.0.1;
+	option broadcast-address 192.168.0.255;
+	default-lease-time 600;
+	max-lease-time 7200;
+	filename "pxelinux.0";
+	next-server 192.168.0.117;
+}
+
+host testclient {
+	hardware ethernet ;
+	fixed-address 192.168.0.188;
+	filename "pxelinux.0";
+	next-server 192.168.0.117;
+}
+
