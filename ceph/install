@@ -1,0 +1,148 @@
+1. ceph install
+
+1) config the yum 
+vi /etc/yum.repos.d/ceph.repo
+[ceph-noarch]
+name=Ceph noarch packages
+baseurl=https://mirrors.tuna.tsinghua.edu.cn/ceph/rpm-{ceph-release}/{distro}/noarch
+enabled=1
+gpgcheck=1
+type=rpm-md
+gpgkey=https://mirrors.tuna.tsinghua.edu.cn/ceph/keys/release.asc
+
+2) update
+yum update && yum install -y ceph-deploy
+
+3) config the hoste
+vi /etc/hosts
+192.168.1.2 node1
+192.168.1.3 node2
+192.168.1.4 node3
+
+4) ssh-keygen
+
+ssh-copy-id node1
+ssh-copy-id node2
+ssh-copy-id node3
+
+5) create the own dir
+mkdir my-cluster
+cd my-cluster
+
+6) ceph-deploy new node1
+
+7) ceph.conf
+
+8) install ceph to all of nodes
+
+ceph-deploy install node1 node2 node3
+
+9) get keys
+
+ceph-deploy mon create-initial
+
+10) initial the disk
+
+ceph-deploy disk zap {osd-server-name}:{disk-name}
+
+ex: ceph-deploy disk zap node1:sdb
+
+11) prepare the OSD
+
+ceph-deploy osd prepare {node-name}:{data-disk}[:{journal-disk}]
+
+ceph-deploy osd prepare node1:sdb1:sdc
+
+12) activate the OSD
+
+ceph-deploy osd activate {node-name}:{data-disk-partition}[:{journal-disk-partition}]
+
+ceph-deploy osd activate node1:sdb1:sdc
+
+13) distribute the key
+
+ceph-deploy admin {admin-node} {ceph-node}
+
+ceph-deploy admin node1 node2 node3
+
+14) sudo chmod +r /etc/ceph/ceph.client.admin.keyring
+
+15) check the health of the cluster
+
+ceph health
+
+
+2. pool
+
+1) create the pool
+
+ceph osd pool create {pool-name} {pg-num} [{pgp-num}] [replicated] \
+   [crush-ruleset-name] [expected-num-objects]
+
+ceph osd pool create {pool-name} {pg-num} {pgp-num} erasure \
+   [erasure-code-profile] [crush-ruleset-name] [expected-num-objects]
+
+2) config the pool
+ceph osd pool set-quota {pool-name} [max-objects {obj-count}] [max-bytes {bytes}]
+
+3) delete the pool
+ceph osd pool delete {pool-name} [{pool-name} --yes-i-really-really-mean-it]
+
+4) rename the pool
+ceph osd pool rename {current-pool-name} {new-pool-name}
+
+5) show pool stat
+rados df
+
+6) snap for pool
+ceph osd pool mksnap {pool-name} {snap-name}
+
+7) delete snap
+ceph osd pool rmsnap {pool-name} {snap-name}
+
+8) set the values of the pool
+
+ceph osd pool set {pool-name} {key} {value}
+
+9) get the values of the pool
+ceph osd pool get {pool-name} {key}
+
+10) config the replicas of the pool
+ceph osd pool set {pool-name} size {num-replicas}
+
+11) get the replicas of the pool
+ceph osd dump | grep 'replicated size'
+
+3. ceph fs
+
+1) config MDS
+ceph-deploy --overwrite-conf mds create ceph1
+
+2) create the two pool
+ceph osd pool create fs_data <pg_num>
+ceph osd pool create fs_metadata <pg_num>
+
+3) create ceph fs
+ceph fs new cephfs fs_metadata fs_data
+
+4) view the ceph fs
+ceph fs ls
+ceph mds stat
+
+5) mount the ceph fs
+
+a) kernel driver
+
+mount -t ceph server_ip:port:/ /mount_point
+
+or add to /etc/fstab
+server_ip:port:/ /mount_poing ceph noatime 0 2
+
+b) FUSE
+yum install ceph-fuse
+mkdir /fuse_test
+ceph-fuse -m server_ip:port /fuse_test
+
+or add to /etc/fstab
+id=admin,conf=/etc/ceph/ceph.conf /fuse_test fuse.ceph defaults 0 0
+
