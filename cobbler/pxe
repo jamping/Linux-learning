@@ -1,0 +1,96 @@
+1)  yum -y install syslinux xinetd tftp-server dhcp
+
+mkdir /var/lib/tftpboot/pxelinux.cfg
+cp /usr/share/syslinux/pxelinux.0 /var/lib/tftpboot/ 
+
+ip addr
+
+vi /etc/sysconfig/dhcpd
+
+DHCPDARGS=eth0
+
+2) vi /etc/dhcp/dhcpd.conf
+
+# dhcpd.conf
+#
+allow booting;
+allow bootp;
+option option-128 code 128 = string;
+option option-129 code 129 = text;
+filename "pxelinux.0";
+next-server 192.168.0.117;
+ddns-update-style none;
+option domain-name "zzb.hj";
+option domain-name-servers 192.168.0.117;
+default-lease-time 600;
+max-lease-time 7200;
+
+subnet 192.168.0.0 netmask 255.255.255.0 {
+        range 192.168.0.150 192.168.0.200;
+        option domain-name-servers hzdns.zzb.hj;
+        option domain-name "zzb.hj";
+        option routers 192.168.0.1;
+        option broadcast-address 192.168.0.255;
+        default-lease-time 600;
+        max-lease-time 7200;
+        filename "pxelinux.0";
+        next-server 192.168.0.117;
+
+        host testclient {
+                hardware ethernet 08:00:27:9D:9E:A9;
+                fixed-address 192.168.0.188;
+                filename "pxelinux.0";
+                next-server 192.168.0.117;
+        }
+}
+
+systemctl start xinetd
+systemctl enable xinetd 
+systemctl restart dhcpd 
+
+3) Download ISO image first to your PXE server. The following example shows the ISO image of CentOS 7 is under /home/iso directory. 
+
+mkdir -p /var/pxe/centos7
+mkdir /var/lib/tftpboot/centos7
+mount -t iso9660 -o loop /home/jjp/Downloads/CentOS-7-x86_64-DVD-1503-01.iso /var/pxe/centos7
+cp /var/pxe/centos7/images/pxeboot/vmlinuz /var/lib/tftpboot/centos7/
+cp /var/pxe/centos7/images/pxeboot/initrd.img /var/lib/tftpboot/centos7/
+cp /usr/share/syslinux/menu.c32 /var/lib/tftpboot/
+
+vi /var/lib/tftpboot/pxelinux.cfg/default
+
+# create new
+
+timeout 100
+default menu.c32
+
+menu title ########## PXE Boot Menu ##########
+label 1
+   menu label ^1) Install CentOS 7
+   kernel centos7/vmlinuz
+   append initrd=centos7/initrd.img method=http://192.168.0.117/centos7 devfs=nomount
+
+label 2
+   menu label ^2) Boot from local drive
+   localboot
+
+4) Start HTTP Server. Refer to here to install httpd. Furthermore add settings like follows.
+
+vi /etc/httpd/conf.d/pxeboot.conf
+
+# create new
+
+Alias /centos7 /var/pxe/centos7
+<Directory /var/pxe/centos7>
+    Options Indexes FollowSymLinks
+    # IP address you allow to access
+
+    Require ip 127.0.0.1 192.168.0.0/24
+</Directory>
+
+systemctl restart httpd 
+
+6 ) PXE-E32:TFTP OPen timeout
+
+firewall-cmd --add-service={tftp,dhcp} --permanent
+firewall-cmd --reload

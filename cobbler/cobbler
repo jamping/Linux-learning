@@ -1,0 +1,101 @@
+ cobbler
+
+a) yum -y install cobbler cobbler-web dhcp tftp-server pykickstart httpd
+
+b) cobbler语法检查前先启动http与cobbler
+
+systemctl start httpd
+systemctl start cobblerd
+
+c) cobbler check
+
+The following are potential configuration items that you may want to fix:
+
+1 : The 'server' field in /etc/cobbler/settings must be set to something other than localhost, or kickstarting features will not work.  This should be a resolvable hostname or IP for the boot server as reachable by all machines that will use it.
+2 : For PXE to be functional, the 'next_server' field in /etc/cobbler/settings must be set to something other than 127.0.0.1, and should match the IP of the boot server on the PXE network.
+3 : Some network boot-loaders are missing from /var/lib/cobbler/loaders, you may run 'cobbler get-loaders' to download them, or, if you only want to handle x86/x86_64 netbooting, you may ensure that you have installed a *recent* version of the syslinux package installed and can ignore this message entirely.  Files in this directory, should you want to support all architectures, should include pxelinux.0, menu.c32, elilo.efi, and yaboot. The 'cobbler get-loaders' command is the easiest way to resolve these requirements.
+4 : enable and start rsyncd.service with systemctl
+5 : debmirror package is not installed, it will be required to manage debian deployments and repositories
+6 : The default password used by the sample templates for newly installed machines (default_password_crypted in /etc/cobbler/settings) is still set to 'cobbler' and should be changed, try: "openssl passwd -1 -salt 'random-phrase-here' 'your-password-here'" to generate new one
+7 : fencing tools were not found, and are required to use the (optional) power management features. install cman or fence-agents to use them
+
+Restart cobblerd and then run 'cobbler sync' to apply changes.
+
+sed -i 's/server: 127.0.0.1/server: 192.168.0.251/' /etc/cobbler/settings
+sed -i 's/next_server: 127.0.0.1/next_server: 192.168.0.251/' /etc/cobbler/settings
+sed -i 's/manage_dhcp: 0/manage_dhcp: 1/' /etc/cobbler/settings
+sed -i 's/pxe_just_once: 0/pxe_just_once: 1/' /etc/cobbler/settings
+sed -ri "/default_password_crypted/s#(.*: ).*#\1\"`openssl passwd -1 -salt 'jamping' 'wbgsnmm'`\"#" /etc/cobbler/settings
+sed -i 's#yes#no#' /etc/xinetd.d/tftp
+sed -i.ori 's#192.168.1#192.168.0#g;22d;23d' /etc/cobbler/dhcp.template
+
+如果当前节点可以访问互联网，执行“cobbler get-loaders”命令亦可,或安装syslinux程序包，再复制/usr/share/syslinux/{pxelinux.0,menu.c32}等文件至/var/lib/cobbler/loaders/目录中,由于本次已经安装好了syslinux,直接从syslinux中复制boot-loaders
+
+cp /usr/share/syslinux/{pxelinux.0,menu.c32} /var/lib/cobbler/loaders/
+
+yum install -y debmirror cman fence-agents 
+
+systemctl enable httpd
+systemctl enable rsyncd
+systemctl start rsyncd
+systemctl enable tftp.socket
+systemctl start tftp.socket
+systemctl enable cobblerd
+systemctl restart cobblerd
+
+重启所有服务
+
+systemctl restart httpd
+systemctl restart cobblerd
+systemctl restart dhcpd
+systemctl restart rsyncd
+systemctl restart tftp.socket
+
+d) cobbler sync
+
+htdigest /etc/cobbler/users.digest "Cobbler" cobbler
+
+cobbler import --name=Centos7 --arch=x86_64 --path=/mnt/centos7
+
+cobbler distro list
+修改profile指定新的KS启动文件在第一次导入系统镜像时，cobbler会给安装镜像指定一个默认的kickstart自动安装文件，
+文件位于/var/lib/cobbler/kickstarts/sample.ks
+
+cobbler profile list ##查看profile列表
+cobbler distro report --name=Centos7-x86_64
+cobbler system add --name=test --profile=Centos7-x86_64
+cobbler system list
+
+firewall-cmd --add-service={http,https,tftp,dhcp} --permanent
+firewall-cmd --reload
+
+e) cobbler的web及界面操作
+
+浏览器访问https://192.168.0.251/cobbler_web
+
+注意CentOS7中cobbler只支持https访问。
+
+账号密码默认均为cobbler
+
+导入的镜像在内核参数中添加net.ifnames=0 biosdevname=0 能够让显示的网卡变为eth0 ，而不是CentOS7中的ens33
+
+f) 
+
+etc/cobbler/users.conf       # Web服务授权配置文件
+/etc/cobbler/users.digest     # 用于web访问的用户名密码配置文件
+
+cat /etc/cobbler/users.digest
+cobbler:Cobbler:a2d6bae81669d707b72c0bd9806e01f3
+# 设置Cobbler web用户登陆密码
+# 在Cobbler组添加cobbler用户，提示输入2遍密码确认
+
+htdigest /etc/cobbler/users.digest "Cobbler" cobbler
+
+Changing password for user cobbler in realm Cobbler
+New password: 123456
+Re-type new password:123456
+
+cobbler sync
+
+systemctl restart httpd
+systemctl restart cobblerd
