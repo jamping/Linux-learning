@@ -1,0 +1,24 @@
+1) install 
+yum -y install gcc-c++  pcre pcre-devel  zlib zlib-devel openssl openssl-devel --setopt=protected_multilib=false 
+
+mkdir ~/tools
+wget -q http://nginx.org/download/nginx-1.14.0.tar.gz
+
+useradd nginx -s /sbin/nologin -M
+
+tar xf nginx-1.14.0.tar.gz
+cd nginx-1.14.0
+./configure --user=nginx --group=nginx --prefix=/application/nginx-1.14.0/ --with-http_stub_status_module --with-http_ssl_module
+
+make
+make install
+
+ln -s /application/nginx-1.14.0 /application/nginx
+
+2) check it
+/application/nginx/sbin/nginx -t
+
+3) start the nginx
+/application/nginx/sbin/nginx
+
+
