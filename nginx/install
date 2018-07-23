@@ -22,3 +22,11 @@ ln -s /application/nginx-1.14.0 /application/nginx
 /application/nginx/sbin/nginx
 
 
+4) auth
+auth_basic "string":
+auth_basic_user_file conf/htpasswd;
+
+printf "jjp:$(openssl passwd -crypt 123456)\n" >>conf/htpasswd
+chmod 400 conf/htpasswd
+chown nginx conf/htpasswd
+
