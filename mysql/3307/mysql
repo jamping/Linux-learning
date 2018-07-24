@@ -28,7 +28,7 @@ function_stop_mysql()
 	   exit
 	else
 	   printf "Stopped MySQL...\n"
-	   ${CmdPath}/mysqladmin -u ${mysql_user} -p ${mysql_pwd} -S /data/${port}/mysql.sock shutdown
+	   ${CmdPath}/mysqladmin -u${mysql_user} -p${mysql_pwd} -S /data/${port}/mysql.sock shutdown
 	fi
 }
 

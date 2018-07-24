@@ -1,0 +1,28 @@
+1) mysql init
+cd /application/mysql/scripts
+./mysql_install_db --basedir=/application/mysql --datadir=/data/3307/data --user=mysql
+./mysql_install_db --basedir=/application/mysql --datadir=/data/3308/data --user=mysql
+
+2) change pass
+/application/mysql/bin/mysqladmin -uroot -S /data/3307/mysql.sock password 'wbgsnmm'
+/application/mysql/bin/mysqladmin -uroot -S /data/3308/mysql.sock password 'wbgsnmm'
+
+3) mysql login
+/application/mysql/bin/mysql -S /data/3307/mysql.sock
+/application/mysql/bin/mysql -uroot -p -S /data/3307/mysql.sock
+
+4) autorun
+echo "#mysql multi instances" >> /etc/rc.local
+echo "/data/3307/mysql start" >> /etc/rc.local
+echo "/data/3308/mysql start" >> /etc/rc.local
+
+echo "#nginx multi instances" >> /etc/rc.local
+echo "/application/nginx/sbin/nginx" >> /etc/rc.local
+echo "/application/nginx/sbin/nginx -c /home/inca/conf/nginx.conf &>/dev/null &" >> /etc/rc.local
+
+5) globle path
+
+echo 'export PATH=/application/nginx/sbin:$PATH' >>/etc/profile
+echo 'export PATH=/application/mysql/bin:$PATH' >>/etc/profile
+echo 'export PATH=/application/php/bin:$PATH' >>/etc/profile
+echo 'export PATH=/application/php/sbin:$PATH' >>/etc/profile

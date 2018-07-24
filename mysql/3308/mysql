@@ -3,7 +3,7 @@
 # this scripts is created by jjp at 2018-07-23
 #################################################################################
 #init
-port=3307
+port=3308
 mysql_user="root"
 mysql_pwd="wbgsnmm"
 CmdPath="/application/mysql/bin"
@@ -28,7 +28,7 @@ function_stop_mysql()
 	   exit
 	else
 	   printf "Stopped MySQL...\n"
-	   ${CmdPath}/mysqladmin -u ${mysql_user} -p ${mysql_pwd} -S /data/${port}/mysql.sock shutdown
+	   ${CmdPath}/mysqladmin -u${mysql_user} -p${mysql_pwd} -S /data/${port}/mysql.sock shutdown
 	fi
 }
 
