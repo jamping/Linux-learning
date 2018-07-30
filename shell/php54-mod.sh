@@ -1,6 +1,10 @@
 #!/bin/bash
 
 # @todo: php54升级
+# htdocs="/application/nginx/html"
+# INSTALLDIR=/application
+# CURDIR=/root/tools
+# SRC=/root/tools/src
 ########## Function Start ##########
 function INSTALL_PHP54()
 {

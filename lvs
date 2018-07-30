@@ -1,0 +1,748 @@
+1.2 LVS介绍
+1.2.1 LVS简介
+
+LVS是Linux Virtual Server的简写。即Linux虚拟服务器，是一个虚拟的服务器集群系统，可以在UNIX/LINUX平台下实现负载均衡集群功能，该项目在1998年5月由章文嵩博士组织成立是中国国内最早出现的自由软件之一。
+	
+官网：http://www.linuxvirtualserver.org/index.html
+中文资料
+LVS项目介绍           http://www.linuxvirtualserver.org/zh/lvs1.html
+LVS集群的体系结构     http://www.linuxvirtualserver.org/zh/lvs2.html
+LVS集群中的IP负载均衡技术  http://www.linuxvirtualserver.org/zh/lvs3.html
+LVS集群的负载调度      http://www.linuxvirtualserver.org/zh/lvs4.html
+1.2.2 LVS内核模块ip_vs介绍
+
+²  早在2.2内核时，IPVS就已经以内核补丁的形式出现。
+
+²  从2.4.23版本开始，IPVS软件就合并到Linux内核的常用版本的内核补丁集合。
+
+²  从2.4.24以后IPVS已经成为Linux官方标准内核的一部分。
+
+²  LVS无需安装系统自带
+
+²  安装的是管理工具，第一种ipvsadm，第二种是keepalived
+
+²  ipvsadm通过命令行管理，keepalive读取配置文件管理
+1.2.3 LVS 专业术语：
+
+²  VIP ：虚拟ip地址  virtural ip address  用于给客户端计算机提供服务的ip地址
+
+²  RIP：real ip，集群下面节点使用的ip地址，物理ip地址
+
+²  DIP：director ip 用于连接内外网络的ip，物理网卡上的ip地址，他是负载均衡器上的ip
+
+²  CIP：client ip 客户端用户计算机请求集群服务器的ip地址，该地址用作发送给集群的请求的源ip地址
+1.2.4 IPVS调度器负载调度算法：LVS调度算法
+
+1.      10种调度算法
+
+²  固定调度算法：rr,wrr,dh,sh
+
+²  动态调度算法：wlc,lc,lblc,lblcr,SED,NQ.
+
+2.      最常用的三种RR WRR WLC
+
+²  rr :轮询调度，他将请求依次分配不同的RS节点，RS服务器均摊请求，这种算法比较简单，但是只适合RS节点相差性能不大的情况
+
+²  wrr:加权轮询调度，它将依据不同RS节点的权值分配任务，权值高的RS将优先获得任务，并且分配的连接数比权值低的RS节点更多。相同权值的RS得到相同数目的连接数
+
+²  dh:destination hashing 以目的地址为关键字查找一个静态hash表来获取需要的RS
+
+²  sh:source hashing 以源地址为关键字查找一个静态hash表来获取需要的RS
+
+动态调度算法：
+
+wlc:加权最小连接数调度（weighted least-connection）假设各台RS的权值依次为Wi(i=1...n) 。当前的tcp连接数依次为Ti(i=1..n),依次取TI/WI为最小的RS作为下一个分配的RS
+
+LC
+
+LBLC
+
+LBLCR
+
+SED
+
+NQ    都不常用
+
+一般的网络服务http mail mysql 常用的调度算法是rr,wrr wlc
+1.3 LVS集群搭建
+1.3.1 LVS 环境准备
+	
+1.准备4台安装好CentOS7.2系统的虚拟机，内存512M。
+2.所有虚拟机的防火墙和Selinux关闭
+3.主机名及IP地址关系如下：
+lb01    10.0.0.5
+lb02    10.0.0.6
+web01   10.0.0.8
+web02   10.0.0.7
+4.web01和web02只需要安装Nginx软件，并满足下面条件：
+curl http://10.0.0.8/www/
+得到结果为web01
+curl http://10.0.0.7/www/
+得到结果为web02
+5.安装好wireshark 2.2.2版本  2.2.x版本以上即可
+[root@web02 ~]# getenforce
+Disabled
+[root@web02 ~]# systemctl is-enabled firewalld.service
+disabled
+[root@web02 ~]#注意：永久关闭
+
+
+1.3.2 配置LVS负载均衡服务
+	
+1.      安装ipvsadm管理工具
+yum -y install ipvsadm 激活 [root@lb01 ~]# ipvsadm
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+[root@lb01 ~]# lsmod|grep ip_vs
+ip_vs                 140944  0
+nf_conntrack          105745  1 ip_vs
+libcrc32c              12644  2 xfs,ip_vs
+[root@lb01 ~]#
+2.      服务端配置
+配置LVS负载均衡服务（只在lb01操作）
+步骤1：在eth0网卡绑定VIP地址（ip）
+步骤2：清除当前所有LVS规则（-C）
+步骤3：设置tcp、tcpfin、udp链接超时时间（--set）
+步骤4：添加虚拟服务（-A），调度算法见man ipvsadm
+步骤5：将虚拟服务关联到真实服务上（-a）
+步骤6：查看配置结果（-ln）
+[root@lb01 ~]# ip addr add 10.0.0.3/24 dev eth0
+[root@lb01 ~]# ipvsadm -ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+[root@lb01 ~]# ipvsadm -C  
+[root@lb01 ~]# ipvsadm --set 30 5 60   
+[root@lb01 ~]# ipvsadm -ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+[root@lb01 ~]# ipvsadm -A -t 10.0.0.3:80 -s wrr -p 20 
+[root@lb01 ~]# ipvsadm -ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+TCP  10.0.0.3:80 wrr persistent 20
+[root@lb01 ~]# ipvsadm -a -t 10.0.0.3:80 -r 10.0.0.7:80 -g -w 1
+[root@lb01 ~]# ipvsadm -a -t 10.0.0.3:80 -r 10.0.0.8:80 -g -w 1
+[root@lb01 ~]# ipvsadm -ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+TCP  10.0.0.3:80 wrr persistent 20
+  -> 10.0.0.7:80                  Route   1      0          0        
+  -> 10.0.0.8:80                  Route   1      0          0        
+[root@lb01 ~]#
+1.3.3 web服务器配置
+	
+步骤1：在lo网卡绑定VIP地址（ip）
+步骤2：修改内核参数抑制ARP响应
+两台web服务器都需要操作，完成后不能再lb01测试，使用浏览器测试即可
+[root@web01 ~]# ip addr add 10.0.0.3/32 dev lo
+[root@web01 ~]# cat >>/etc/sysctl.conf<<EOF
+> net.ipv4.conf.all.arp_ignore = 1
+> net.ipv4.conf.all.arp_announce = 2
+> net.ipv4.conf.lo.arp_ignore = 1
+> net.ipv4.conf.lo.arp_announce = 2
+> EOF
+[root@web01 ~]# sysctl -p
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.all.arp_announce = 2
+net.ipv4.conf.lo.arp_ignore = 1
+net.ipv4.conf.lo.arp_announce = 2
+[root@web01 ~]#
+
+1.3.4 问题
+
+问题1：浏览器访问没有发现轮询效果？
+
+使用多个客户端测试，LVS轮询有时间限制，设置30秒的轮询时间，在30秒内不会轮询。
+
+问题2：使用抓包工具，发现进行通信的是Windows的ip和lb01的80端口但是lb01没有80端口？
+
+
+因为系统知道LVS里面有80端口，如果没有配置LVS那么就访问不了。
+结论1：从客户端发送http请求数据包的IP地址为WindowsIP地址，MAC地址也是windows的MAC。
+结论2：从lb01响应的数据包：IP是1b01的VIP发送到客户端，但是mac地址可能是两个web的mac'地址发送给客户端。
+
+问题3：客户端的操作有什么含义？
+
+image.png
+
+1.      realserver为什么要在lo接口上配置VIP？
+
+既然要让RS能够处理目标地址为VIP的IP包，首先必须要让RS能够接收到这个数据包。在lo上配置vip能够完成接收包并将结果返回给client。
+
+2.      在eth0网卡配置VIP可以吗？.
+
+不可以，将VIP设置在eth0网卡上，会影响RS的arp请求，造成整体LVS集群arp缓存表絮乱，以至于整个负载均衡集群不能正常工作。
+
+ 
+1.4 LVS集群工作模式--DR直接路由模式
+1.4.1 工作原理
+
+²  DR模式是通过改写请求报文的目标MAC地址，将请求发给真是服务器，而真是服务器将响应后的处理结果直接返回给客户端用户。
+
+²  DR技术可极大的提高集群系统的伸缩性。但要求调度器LB与真实服务器RS都有一块物理网卡连在同一物理网段上。即必须在同一局域网环境。
+
+关键：
+1，绑定vip到lo，避免了ip冲突问题，解决了Real server 无法识别client的报文问题
+
+2，绑定vip会主动响应arp广播，因此要抑制arp，告诉real server 不要抢lvs的arp包，只接收包
+
+ 
+
+虚拟IP地址由真实服务器和负载平衡器共享。负载均衡器也有一个配置了虚拟IP地址的接口，用于接收请求数据包，并将数据包直接路由到选定的服务器。所有真实服务器的非ARP别名接口配置了虚拟IP地址，或者将去往虚拟IP地址的数据包重定向到本地套接字，以便真实服务器可以在本地处理这些数据包。负载均衡器和真实服务器必须有一个通过HUB /交换机物理连接的接口
+
+当用户访问服务器集群提供的虚拟服务时，到达虚拟IP地址（虚拟服务器的IP地址）的数据包。负载均衡器（LinuxDirector）检查数据包的目标地址和端口。如果它们与虚拟服务相匹配，则通过调度算法从集群中选择真实的服务器，并将该连接添加到记录连接的哈希表中。然后，负载均衡器直接将其转发到选定的服务器。当传入的数据包属于这个连接，并且可以在散列表中找到所选的服务器时，数据包将再次被直接路由到服务器。当服务器收到转发的数据包时，服务器发现数据包是用于别名接口或本地套接字的地址，所以它处理请求并最终直接返回给用户。连接终止或超时后，连接记录将从哈希表中删除。
+
+负载均衡器只是将数据帧的MAC地址更改为所选服务器的MAC地址，并将其重新发送到LAN上。这就是负载均衡器和每台服务器之间必须通过一个不间断的局域网直接相连的原因
+1.4.2 DR模式的总结
+
+1，通过在调度器LB上修改数据包的目的mac地址实现转发，注意 ，源ip仍然是cip，目的ip地址仍然是VIP
+
+2，请求的报文经过调度器而RS响应处理后的报文无需经过调度器LB，直接返回给客户端因此，并发访问量大时候效率很高
+
+3，因DR模式是通过MAC地址的改写机制实现的转发，因此所有RS节点和调度器LB只能在一个局域网LAN中（小缺点）
+
+4，需要注意RS节点的vip的绑定（lo:vip.lol:vip）和arp抑制问题
+
+5，强调：RS节点的默认网关不需要调度器LB的DIP，而直接是IDC机房分配的上级路由器的IP（这是RS带有外网ip地址的情况）
+
+6，由于DR模式的调度器仅仅进行了目的MAC地址改写，因此，调度器LB无法改变请求报文的目的端口
+
+7，当前调度器LB支持几乎所有的unix linux系统，但目前不支持windows，但是真实的RS可以是windows.
+
+8.总的来说，DR模式效率很高，但是配置麻烦，因此，访问量不大的公司可以使用haproxy、nginx，这符合运维的原则：简单，易用，高效 日PV2000W，并发1W以下使用haproxy,nginx（lvs NAT模式）就好
+
+9，直接对外的访问业务，例如web服务做RS节点，RS最好用公网ip地址（直接把请求返回给用户），如果不直接对外业务，例如mysql，存储系统，最好使用内部ip地址
+1.4.3 arp相关问题
+
+为了提高IP转换MAC的效率，系统会将解析结构保存下来，这个结果叫做ARP缓存。
+
+²  Windows查看ARP缓存目录：arp -a
+
+²  Linux查看ARP缓存命令 ：arp -n
+
+arp缓存表优劣势：
+
+（1）    主机有了arp缓存表，可以加快ARP的解析速度，减少局域网内广播风暴。因为arp是发广播包解析的，频繁的解析也是消耗带宽的，尤其是机器多的时候。
+
+（2）    因为有了arp缓存表，所以有了******服务器主机的风险，arp欺骗***。（例如在班里有个同学做恶作剧，伪装班主任告诉快递员错误的教室编号）
+
+（3）    切换路由器，负载均衡器等设备时，可能会导致整个网络短时间中断网络。（因为切换路由器所有的客户端的arp缓存表没有更新完成，等更新完成网络就会恢复正常。）
+1.4.4 服务器切换ARP问题
+
+当集群中一台提供服务的lb01机器宕机后，然后VIP会转移到备lb02上，但是客户端的ARP缓存表的地址解析还是宕机的lb01的mac地址，从而导致在lb02上添加VIP，也会发生客户端无法访问的情况。
+
+解决方法：
+
+当lb01宕机，VIP地址迁移到lb02时，需要通过arping命令通告所有网络内机器更新本地的arp缓存表，从而使的客户机访问重新广播获取MAC地址。
+
+[root@lb01 ~]# ip addr del 10.0.0.3/24 dev eth0
+[root@lnb02 ~]# ip addr add  10.0.0.3/24 dev eth0
+[root@lnb02 ~]# ip addr  show eth0
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 00:0c:29:a9:6e:08 brd ff:ff:ff:ff:ff:ff
+    inet 10.0.0.6/24 brd 10.0.0.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet 10.0.0.3/24 scope global secondary eth0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::20c:29ff:fea9:6e08/64 scope link
+       valid_lft forever preferred_lft forever
+[root@lnb02 ~]# arping -I eth0 -c 1 -U 10.0.0.3 #ARP广播地址解析
+ARPING 10.0.0.3 from 10.0.0.3 eth0
+Sent 1 probes (1 broadcast(s))
+Received 0 response(s)
+[root@lnb02 ~]#
+Type `help' to learn how to use Xshell prompt.
+[e:\~]$ arp -a
+Windows查看
+接口: 10.0.0.1 --- 0x6
+  Internet 地址         物理地址              类型
+  10.0.0.3              00-0c-29-a9-6e-08     动态       
+  10.0.0.5              00-0c-29-c4-d5-09     动态       
+  10.0.0.6              00-0c-29-a9-6e-08     动态       
+  10.0.0.7              00-0c-29-16-b0-ab     动态       
+  10.0.0.8              00-0c-29-f3-6f-6c     动态       
+  10.0.0.255            ff-ff-ff-ff-ff-ff     静态
+
+  
+1.4.5 抑制RS端arp后广播情况
+
+image.png
+1.4.6 arp_announce
+
+arp_announce:对网络接口上，本地IP地址的发出的，ARP回应，作出相应级别的限制: 确定不同程度的限制,宣布对来自本地源IP地址发出Arp请求的接口
+
+²  0 - (默认) 在任意网络接口（eth0,eth1，lo）上的任何本地地址
+
+²  1 -尽量避免不在该网络接口子网段的本地地址做出arp回应. 当发起ARP请求的源IP地址是被设置应该经由路由达到此网络接口的时候很有用.此时会检查来访IP是否为所有接口上的子网段内ip之一.如果改来访IP不属于各个网络接口上的子网段内,那么将采用级别2的方式来进行处理.
+
+²  2 - 对查询目标使用最适当的本地地址.在此模式下将忽略这个IP数据包的源地址并尝试选择与能与该地址通信的本地地址.首要是选择所有的网络接口的子网中外出访问子网中包含该目标IP地址的本地地址. 如果没有合适的地址被发现,将选择当前的发送网络接口或其他的有可能接受到该ARP回应的网络接口来进行发送.
+
+补充：
+
+因为路由器一般是动态学习ARP包的（一般动态配置DHCP的话），当内网的机器要发送一个到外部的ip包，那么它就会请求 路由器的Mac地址，发送一个arp请求，这个arp请求里面包括了自己的ip地址和Mac地址，而linux默认是使用ip的源ip地址作为arp里面 的源ip地址，而不是使用发送设备上面的 ，这样在lvs这样的架构下，所有发送包都是同一个VIP地址，那么arp请求就会包括VIP地址和设备 Mac，而路由器收到这个arp请求就会更新自己的arp缓存，这样就会造成ip欺骗了，VIP被抢夺，所以就会有问题。 
+
+arp缓存为什么会更新了，什么时候会更新呢，为了减少arp请求的次数，当主机接收到询问自己的arp请求的时候，就会把源ip和源Mac放入自 己的arp表里面，方便接下来的通讯。如果收到不是询问自己的包（arp是广播的，所有人都收到），就会丢掉，这样不会造成arp表里面无用数据太多导致 有用的记录被删除。 
+
+在设置参数的时候将arp_ignore 设置为1，意味着当别人的arp请求过来的时候，如果接收的设备上面没有这个ip，就不做出响应，默认是0，只要这台机器上面任何一个设备上面有这个ip，就响应arp请求，并发送mac地址
+1.4.7 arp_ignore
+
+arp_ignore:定义对目标地址为本地IP的ARP询问不同的应答模式0
+
+²  0 - (默认值): 回应任何网络接口上对任何本地IP地址的arp查询请求
+
+²  1 - 只回答目标IP地址是来访网络接口本地地址的ARP查询请求
+
+²  2 -只回答目标IP地址是来访网络接口本地地址的ARP查询请求,且来访IP必须在该网络接口的子网段内
+
+²  3 - 不回应该网络界面的arp请求，而只对设置的唯一和连接地址做出回应
+
+²  4-7 - 保留未使用
+
+²  8 -不回应所有（本地地址）的arp查询
+
+ 
+1.5 LVS集群工作模式--NAT
+
+image.png
+
+当用户访问服务器集群提供的服务时，发往虚拟IP地址（负载均衡器的外部IP地址）的请求包到达负载均衡器。 负载均衡器检查数据包的目标地址和端口号。 如果根据虚拟服务器规则表匹配虚拟服务器服务，则通过调度算法从集群中选择真实的服务器，并将该连接添加到记录所建立的连接的哈希表中。 然后，将数据包的目的地址和端口重写为所选服务器的地址和端口，并将数据包转发给服务器。 当传入数据包属于此连接，并且可以在散列表中找到所选服务器时，数据包将被重写并转发到选定的服务器。 当应答报文返回时，负载均衡器将报文的源地址和端口重写为虚拟服务的源地址和端口。 连接终止或超时后，连接记录将在哈希表中删除。
+
+NAT模式优缺点：
+
+1、NAT技术将请求的报文和响应的报文都需要通过LB进行地址改写，因此网站访问量比较大的时候LB负载均衡调度器有比较大的瓶颈，一般要求最多之能10-20台节点
+
+2、只需要在LB上配置一个公网IP地址就可以了。
+
+3、每台内部的节点服务器的网关地址必须是调度器LB的内网地址。
+
+4、NAT模式支持对IP地址和端口进行转换。即用户请求的端口和真实服务器的端口可以不一致。
+1.6 LVS集群工作模式--TUN隧道模式
+
+IP隧道（IP封装）是一种将IP数据报封装在IP数据报中的技术，它允许指向一个IP地址的数据报被封装并重定向到另一个IP地址。  IP封装现在通常用于Extranet，Mobile-IP，IP-Multicast，隧道主机或网络。
+
+image.png
+
+当用户访问服务器集群提供的虚拟服务时，到达虚拟IP地址（虚拟服务器的IP地址）的包。 负载均衡器检查数据包的目标地址和端口。 如果它们与虚拟服务相匹配，则根据连接调度算法从集群中选择真实服务器，并将该连接添加到记录连接的哈希表中。 然后，负载均衡器将数据包封装在IP数据报中并转发给选定的服务器。 当一个传入的数据包属于这个连接，并且可以在散列表中找到所选的服务器时，数据包将被再次封装并转发到该服务器。 当服务器收到封装后的报文时，对报文进行解封装处理，直接将结果按照自己的路由表返回给用户。 连接终止或超时后，连接记录将从哈希表中删除。
+1.7 LVS集群工作模式--FULLNAT
+
+image.png
+
+l  LVS的DR和NAT模式要求RS和LVS在同一个vlan中，导致部署成本过高；TUNNEL模式虽然可以跨vlan，但RealServer上需要部署ipip隧道模块等，网络拓扑上需要连通外网，较复杂，不易运维。为了解决上述问题，开发出
+
+l  FULLNAT，该模式和NAT模式的区别是：数据包进入时，除了做DNAT，还做SNAT（用户ip->内网ip），从而实现LVS-RealServer间可以跨vlan通讯，RealServer只需要连接到内网。
+
+l  类比地铁站多个闸机。
+
+
+ 
+1.8 LVS负载均衡+keepalived高可用
+1.8.1 负载介绍
+
+软件负载
+
+       nginx、lvs nat 反向代理型负载均衡
+
+       lvs dr 负载均衡
+
+       haproxy
+
+硬件负载
+
+       F5 A10
+
+ipvsadm -C
+
+ipvsadm -Ln
+1.8.2 搭建部署
+	
+1.清空ipvsadm（不使用ipvsadm）
+[root@lb01 ~]# ipvsadm -Ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+TCP  10.0.0.3:80 wrr persistent 20
+  -> 10.0.0.7:80                  Route   1      0          0        
+  -> 10.0.0.8:80                  Route   1      0          0        
+[root@lb01 ~]# ipvsadm -C
+[root@lb01 ~]# ipvsadm -Ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+[root@lb01 ~]#
+2.安装keepalived（两台lb都要安装）
+[root@lb01 ~]# yum -y install keepalived
+3.全局定义
+[root@lb01 ~]# head -6 /etc/keepalived/keepalived.conf
+! Configuration File for keepalived
+  
+global_defs {
+   router_id 01
+}
+  
+[root@lb01 ~]# [root@lnb02 ~]# head -6  /etc/keepalived/keepalived.conf
+! Configuration File for keepalived
+  
+global_defs {
+   router_id 02
+}
+  
+[root@lnb02 ~]#
+4.      VIP配置
+vrrp_instance VI_1 {  #lb01.
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 150
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        10.0.0.3/24
+    }
+}
+vrrp_instance VI_1 {   #lb02
+    state BACKUP
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        10.0.0.3/24
+    }
+}
+5.      LVS配置
+[root@lb01 ~]# cat  /etc/keepalived/keepalived.conf
+global_defs {
+   router_id LVS_01
+}
+  
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 150
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+     10.0.0.3/24
+    }
+}
+  
+virtual_server 10.0.0.3 80 {
+    delay_loop 6           
+    lb_algo wrr               
+    lb_kind DR               
+    nat_mask 255.255.255.0
+    persistence_timeout 50    
+    protocol TCP               
+  
+    real_server 10.0.0.7 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+  
+    real_server 10.0.0.8 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+}
+   
+[root@lb01 ~]# [root@lnb02 keepalived]# cat keepalived.conf
+global_defs {
+   router_id LVS_02
+}
+  
+vrrp_instance VI_1 {
+    state BACKUP
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+     10.0.0.3/24
+    }
+}
+virtual_server 10.0.0.3 80 {
+    delay_loop 6         
+    lb_algo wrr               
+    lb_kind DR               
+    nat_mask 255.255.255.0
+    persistence_timeout 50    
+    protocol TCP               
+  
+    real_server 10.0.0.7 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+  
+    real_server 10.0.0.8 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+}
+  
+[root@lnb02 keepalived]#
+6.      启动
+[root@lb01 ~]# systemctl start keepalived.service
+[root@lb01 ~]# ip addr show eth0
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 00:0c:29:c4:d5:09 brd ff:ff:ff:ff:ff:ff
+    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet 10.0.0.3/24 scope global secondary eth0
+       valid_lft forever preferred_lft forever
+[root@lb01 ~]# ipvsadm -ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+TCP  10.0.0.3:80 wrr persistent 50
+  -> 10.0.0.7:80                  Route   1      0          0        
+  -> 10.0.0.8:80                  Route   1      0          0        
+[root@lb01 ~]#
+
+ 
+1.8.3 多实例部署
+	
+[root@lb01 ~]# cat    /etc/keepalived/keepalived.conf
+global_defs {
+   router_id LVS_01
+}
+  
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 150
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+     10.0.0.3/24
+    }
+}
+vrrp_instance VI_2 {
+    state BACKUP
+    interface eth0
+    virtual_router_id 52
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 2222
+    }
+    virtual_ipaddress {
+     10.0.0.4/24
+    }
+}
+  
+virtual_server 10.0.0.3 80 {
+    delay_loop 6           
+    lb_algo wrr               
+    lb_kind DR               
+    nat_mask 255.255.255.0
+    persistence_timeout 50    
+    protocol TCP               
+  
+    real_server 10.0.0.7 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+  
+    real_server 10.0.0.8 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+}
+virtual_server 10.0.0.4 80 {
+    delay_loop 6         
+    lb_algo wrr               
+    lb_kind DR               
+    nat_mask 255.255.255.0
+    persistence_timeout 50    
+    protocol TCP               
+  
+    real_server 10.0.0.7 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+  
+    real_server 10.0.0.8 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+}
+  
+[root@lb01 ~]# [root@lnb02 ~]# cat  /etc/keepalived/keepalived.conf
+global_defs {
+   router_id LVS_02
+}
+  
+vrrp_instance VI_1 {
+    state BACKUP
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+     10.0.0.3/24
+    }
+}
+vrrp_instance VI_2 {
+    state MASTER
+    interface eth0
+    virtual_router_id 52
+    priority 150
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 2222
+    }
+    virtual_ipaddress {
+     10.0.0.4/24
+    }
+}
+  
+virtual_server 10.0.0.3 80 {
+    delay_loop 6         
+    lb_algo wrr               
+    lb_kind DR               
+    nat_mask 255.255.255.0
+    persistence_timeout 50    
+    protocol TCP                
+  
+    real_server 10.0.0.7 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+  
+    real_server 10.0.0.8 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+}
+virtual_server 10.0.0.4 80 {
+    delay_loop 6         
+    lb_algo wrr               
+    lb_kind DR               
+    nat_mask 255.255.255.0
+    persistence_timeout 50    
+    protocol TCP               
+  
+    real_server 10.0.0.7 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+  
+    real_server 10.0.0.8 80 {
+        weight 1             
+        TCP_CHECK {
+        connect_timeout 8      
+        nb_get_retry 3
+        delay_before_retry 3
+        connect_port 80
+        }
+    }
+}
+  
+[root@lnb02 ~]#
+检查：
+[root@lnb02 ~]# ipvsadm -ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+TCP  10.0.0.3:80 wrr persistent 50
+  -> 10.0.0.7:80                  Route   1      0          0        
+  -> 10.0.0.8:80                  Route   1      0          0        
+TCP  10.0.0.4:80 wrr persistent 50
+  -> 10.0.0.7:80                  Route   1      0          0         
+  -> 10.0.0.8:80                  Route   1      0          0        
+[root@lnb02 ~]# [root@lb01 ~]# ipvsadm -ln
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+TCP  10.0.0.3:80 wrr persistent 50
+  -> 10.0.0.7:80                  Route   1      0          0        
+  -> 10.0.0.8:80                  Route   1      0          0        
+TCP  10.0.0.4:80 wrr persistent 50
+  -> 10.0.0.7:80                  Route   1      0          0        
+  -> 10.0.0.8:80                  Route   1      0          0        
+[root@lb01 ~]#
