@@ -1,0 +1,124 @@
+LVS可以实现负载均衡，但是不能够进行健康检查，比如一个rs出现故障，LVS 仍然会把请求转发给故障的rs服务器，这样就会导致请求的无效性。keepalive 软件可以进行健康检查，而且能同时实现 LVS 的高可用性，解决 LVS 单点故障的问题，其实 keepalive 就是为 LVS 而生的。
+
+1、实验环境
+
+4台节点
+
+    Keepalived1 + lvs1(Director1)：192.168.0.48
+    Keepalived2 + lvs2(Director2)：192.168.0.58
+    Real server1：192.168.0.18
+    Real server2：192.168.0.28
+    IP: 192.168.0.38
+
+2、安装系统软件
+
+Lvs + keepalived的2个节点安装
+
+# yum install ipvsadm keepalived -y
+
+Real server + nginx服务的2个节点安装
+
+# yum install epel-release -y
+# yum install nginx -y
+
+3、设置配置脚本
+
+Real server节点2台配置脚本：
+复制代码
+
+# vim /usr/local/sbin/lvs_dr_rs.sh
+#! /bin/bash
+vip=192.168.0.38
+ifconfig lo:0 $vip broadcast $vip netmask 255.255.255.255 up
+route add -host $vip lo:0
+echo "1" >/proc/sys/net/ipv4/conf/lo/arp_ignore
+echo "2" >/proc/sys/net/ipv4/conf/lo/arp_announce
+echo "1" >/proc/sys/net/ipv4/conf/all/arp_ignore
+echo "2" >/proc/sys/net/ipv4/conf/all/arp_announce
+
+2节点rs 上分别执行脚本：
+bash /usr/local/sbin/lvs_dr_rs.sh
+
+复制代码
+
+keepalived节点配置(2节点)：
+复制代码
+
+主节点( MASTER )配置文件
+vim /etc/keepalived/keepalived.conf
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        192.168.0.38
+    }
+}
+
+virtual_server 192.168.0.38 80 {
+    delay_loop 6
+    lb_algo rr
+    lb_kind DR
+    persistence_timeout 0
+    protocol TCP
+
+    real_server 192.168.0.18 80 {
+        weight 1
+        TCP_CHECK {
+            connect_timeout 10
+            nb_get_retry 3
+            delay_before_retry 3
+            connect_port 80
+        }
+    }
+
+    real_server 192.168.0.28 80 {
+        weight 1
+        TCP_CHECK {
+            connect_timeout 10
+            nb_get_retry 3
+            delay_before_retry 3
+            connect_port 80
+        }
+    }
+}
+
+复制代码
+
+从节点( BACKUP )配置文件
+
+拷贝主节点的配置文件keepalived.conf，然后修改如下内容：
+
+state MASTER -> state BACKUP
+priority 100 -> priority 90
+
+keepalived的2个节点执行如下命令，开启转发功能：
+
+# echo 1 > /proc/sys/net/ipv4/ip_forward
+
+4、启动keepalive
+
+先主后从分别启动keepalive
+service keepalived start
+
+5、验证结果
+
+实验1
+
+手动关闭192.168.0.18节点的nginx，service nginx stop 在客户端上去测试访问 http://192.168.0.38 结果正常，不会出现访问18节点，一直访问的是28节点的内容。
+
+实验2
+
+手动重新开启 192.168.0.18 节点的nginx， service nginx start 在客户端上去测试访问 http://192.168.0.38 结果正常，按照 rr 调度算法访问18节点和28节点。
+
+实验3
+
+测试 keepalived 的HA特性，首先在master上执行命令 ip addr ，可以看到38的vip在master节点上的；这时如果在master上执行 service keepalived stop 命令，这时vip已经不再master上，在slave节点上执行 ip addr 命令可以看到 vip 已经正确漂到slave节点，这时客户端去访问 http://192.168.0.38 访问依然正常，验证了 keepalived的HA特性。
+
+lvs 介绍：http://www.it165.net/admin/html/201401/2248.html

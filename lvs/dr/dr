@@ -1,0 +1,66 @@
+1、实验环境
+
+三台机器：
+
+    Director节点：  (eth0 192.168.0.8  vip eth0:0 192.168.0.38)
+    Real server1： (eth0 192.168.0.18 vip lo:0 192.168.0.38)
+    Real server2： (eth0 192.168.0.28 vip lo:0 192.168.0.38)
+
+2、安装
+
+两个 real server 上都安装 nginx 服务
+# yum install -y nginx
+
+Director 上安装 ipvsadm
+# yum install -y ipvsadm
+
+3、Director 上配置脚本
+复制代码
+
+# vim /usr/local/sbin/lvs_dr.sh
+#! /bin/bash
+echo 1 > /proc/sys/net/ipv4/ip_forward
+ipv=/sbin/ipvsadm
+vip=192.168.0.38
+rs1=192.168.0.18
+rs2=192.168.0.28
+ifconfig eth0:0 down
+ifconfig eth0:0 $vip broadcast $vip netmask 255.255.255.255 up
+route add -host $vip dev eth0:0
+$ipv -C
+$ipv -A -t $vip:80 -s wrr 
+$ipv -a -t $vip:80 -r $rs1:80 -g -w 3
+$ipv -a -t $vip:80 -r $rs2:80 -g -w 1
+
+复制代码
+
+执行脚本：
+
+# bash /usr/local/sbin/lvs_dr.sh
+
+4、在2台 rs 上配置脚本：
+复制代码
+
+# vim /usr/local/sbin/lvs_dr_rs.sh
+#! /bin/bash
+vip=192.168.0.38
+ifconfig lo:0 $vip broadcast $vip netmask 255.255.255.255 up
+route add -host $vip lo:0
+echo "1" >/proc/sys/net/ipv4/conf/lo/arp_ignore
+echo "2" >/proc/sys/net/ipv4/conf/lo/arp_announce
+echo "1" >/proc/sys/net/ipv4/conf/all/arp_ignore
+echo "2" >/proc/sys/net/ipv4/conf/all/arp_announce
+
+复制代码
+
+rs 上分别执行脚本：
+
+bash /usr/local/sbin/lvs_dr_rs.sh
+
+5、实验测试
+
+测试方式同上，浏览器访问 http://192.168.0.38
+
+注意：在 DR 模式下，2台 rs 节点的 gateway 不需要设置成 dir 节点的 IP 。
+
+参考链接地址：http://www.cnblogs.com/lgfeng/archive/2012/10/16/2726308.html

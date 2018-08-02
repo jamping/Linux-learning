@@ -1,0 +1,57 @@
+1、实验环境
+
+三台服务器，一台作为 director，两台作为 real server，director 有一个外网网卡(172.16.254.200) 和一个内网ip(192.168.0.8)，两个 real server 上只有内网 ip (192.168.0.18) 和 (192.168.0.28)，并且需要把两个 real server 的内网网关设置为 director 的内网 ip(192.168.0.8)
+
+2、安装和配置
+
+两个 real server 上都安装 nginx 服务
+# yum install -y nginx
+
+Director 上安装 ipvsadm
+# yum install -y ipvsadm
+
+Director 上编辑 nat 实现脚本
+复制代码
+
+# vim /usr/local/sbin/lvs_nat.sh
+# 编辑写入如下内容：
+#! /bin/bash
+# director服务器上开启路由转发功能:
+echo 1 > /proc/sys/net/ipv4/ip_forward
+# 关闭 icmp 的重定向
+echo 0 > /proc/sys/net/ipv4/conf/all/send_redirects
+echo 0 > /proc/sys/net/ipv4/conf/default/send_redirects
+echo 0 > /proc/sys/net/ipv4/conf/eth0/send_redirects
+echo 0 > /proc/sys/net/ipv4/conf/eth1/send_redirects
+# director设置 nat 防火墙
+iptables -t nat -F
+iptables -t nat -X
+iptables -t nat -A POSTROUTING -s 192.168.0.0/24 -j MASQUERADE
+# director设置 ipvsadm
+IPVSADM='/sbin/ipvsadm'
+$IPVSADM -C
+$IPVSADM -A -t 172.16.254.200:80 -s wrr
+$IPVSADM -a -t 172.16.254.200:80 -r 192.168.0.18:80 -m -w 1
+$IPVSADM -a -t 172.16.254.200:80 -r 192.168.0.28:80 -m -w 1
+
+复制代码
+
+保存后，在 Director 上直接运行这个脚本就可以完成 lvs/nat 的配置
+
+/bin/bash /usr/local/sbin/lvs_nat.sh
+
+查看ipvsadm设置的规则
+
+ipvsadm -ln
+
+3、测试LVS的效果
+
+通过浏览器测试2台机器上的web内容 http://172.16.254.200 。为了区分开，我们可以把 nginx 的默认页修改一下：
+
+在 RS1 上执行
+# echo "rs1rs1" >/usr/share/nginx/html/index.html
+
+在 RS2 上执行
+# echo "rs2rs2" >/usr/share/nginx/html/index.html
+
+注意，切记一定要在两台 RS 上设置网关的 IP 为 director 的内网 IP。
