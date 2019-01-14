@@ -119,8 +119,8 @@ OPTIONS='--insecure-registry registry:5000'
 
 设置开机自启动并开启服务
 
-[root@k8s-master ~]# chkconfig docker on
-[root@k8s-master ~]# service docker start
+systemctl enable docker
+systemctl start docker
 
 3.2 安装kubernets
 
@@ -197,12 +197,12 @@ KUBE_MASTER="--master=http://k8s-master:8080"
 
 启动服务并设置开机自启动
 
-[root@k8s-master ~]# systemctl enable kube-apiserver.service
-[root@k8s-master ~]# systemctl start kube-apiserver.service
-[root@k8s-master ~]# systemctl enable kube-controller-manager.service
-[root@k8s-master ~]# systemctl start kube-controller-manager.service
-[root@k8s-master ~]# systemctl enable kube-scheduler.service
-[root@k8s-master ~]# systemctl start kube-scheduler.service
+systemctl enable kube-apiserver.service
+systemctl start kube-apiserver.service
+systemctl enable kube-controller-manager.service
+systemctl start kube-controller-manager.service
+systemctl enable kube-scheduler.service
+systemctl start kube-scheduler.service
 
 4、部署node
 4.1 安装docker
@@ -272,10 +272,10 @@ KUBELET_ARGS=""
 
 启动服务并设置开机自启动
 
-[root@k8s-master ~]# systemctl enable kubelet.service
-[root@k8s-master ~]# systemctl start kubelet.service
-[root@k8s-master ~]# systemctl enable kube-proxy.service
-[root@k8s-master ~]# systemctl start kube-proxy.service
+systemctl enable kubelet.service
+systemctl start kubelet.service
+systemctl enable kube-proxy.service
+systemctl start kube-proxy.service
 
 4.4 查看状态
 
@@ -334,7 +334,7 @@ FLANNEL_ETCD_PREFIX="/atomic.io/network"
 
 systemctl enable flanneld.service 
 systemctl start flanneld.service 
-service docker restart
+systemctl restart docker
 systemctl restart kube-apiserver.service
 systemctl restart kube-controller-manager.service
 systemctl restart kube-scheduler.service
@@ -343,7 +343,7 @@ systemctl restart kube-scheduler.service
 
 systemctl enable flanneld.service 
 systemctl start flanneld.service 
-service docker restart
+systemctl restart docker
 systemctl restart kubelet.service
 systemctl restart kube-proxy.service
 
