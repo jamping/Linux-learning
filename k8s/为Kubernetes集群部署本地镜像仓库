@@ -1,0 +1,67 @@
+ 为Kubernetes集群部署本地镜像仓库
+
+　　经过之前两篇文章：Centos7部署Kubernetes集群、基于kubernetes集群部署DashBoard，我们基本上已经能够在k8s的集群上部署一个应用了，但有一个问题就是：生产环境下，我们势必不能够每个机器都导入一遍从海外下载回来的镜像，也不能真的搭建一个长期使用的梯子，这两个方法都不是可以长期使用的。以下，我们通过搭建本地的私有镜像仓库（docker registry，这个镜像可以在国内直接下载）来解决这个问题。
+1、部署docker registry
+
+　　在master上搭建registry。
+1.1 拉取registry镜像
+
+
+[root@host-10-0-251-222 ~]# docker pull docker.io/registry 
+Using default tag: latest
+Trying to pull repository docker.io/library/registry ... 
+sha256:0e40793ad06ac099ba63b5a8fae7a83288e64b50fe2eafa2b59741de85fd3b97: Pulling from docker.io/library/registry
+b7f33cc0b48e: Pull complete 
+46730e1e05c9: Pull complete 
+458210699647: Pull complete 
+0cf045fea0fd: Pull complete 
+b78a03aa98b7: Pull complete 
+Digest: sha256:0e40793ad06ac099ba63b5a8fae7a83288e64b50fe2eafa2b59741de85fd3b97
+Status: Downloaded newer image for docker.io/registry:latest
+[root@host-10-0-251-222 ~]# docker images
+REPOSITORY           TAG                 IMAGE ID            CREATED             SIZE
+docker.io/registry   latest              d1e32b95d8e8        4 weeks ago         33.17 MB
+
+
+1.2 启动registry
+
+docker run -d -p 5000:5000 --name=registry --restart=always --privileged=true  --log-driver=none -v /home/data/registrydata:/tmp/registry registry
+
+其中，/home/data/registrydata是一个比较大的系统分区，今后镜像仓库中的全部数据都会保存在这个外挂目录下。
+2、更改名称并推送
+
+
+[root@K8s-node-2 ~]# docker images
+REPOSITORY                                            TAG                 IMAGE ID            CREATED             SIZE
+registry.access.redhat.com/rhel7/pod-infrastructure   latest              34d3450d733b        2 weeks ago         205 MB
+gcr.io/google_containers/kubernetes-dashboard-amd64   v1.5.1              1180413103fd        5 weeks ago         103.6 MB
+[root@K8s-node-2 ~]# docker tag registry.access.redhat.com/rhel7/pod-infrastructure:latest registry:5000/pod-infrastructure:latest
+[root@K8s-node-2 ~]# docker tag gcr.io/google_containers/kubernetes-dashboard-amd64:v1.5.1 registry:5000/kubernetes-dashboard-amd64:v1.5.1
+[root@K8s-node-2 ~]# docker push registry:5000/pod-infrastructure:latest
+The push refers to a repository [registry:5000/pod-infrastructure]
+ba3d4cbbb261: Pushed 
+0a081b45cb84: Pushed 
+df9d2808b9a9: Pushed 
+latest: digest: sha256:9314554780673b821cb7113d8c048a90d15077c6e7bfeebddb92a054a1f84843 size: 948
+[root@K8s-node-2 ~]# docker push registry:5000/kubernetes-dashboard-amd64:v1.5.1
+The push refers to a repository [registry:5000/kubernetes-dashboard-amd64]
+25820b2590cc: Pushed 
+v1.5.1: digest: sha256:f3f399a937a73b2c0361d93576cd4eb854018a1445b016577e95976c4e09e694 size: 529
+[root@K8s-node-2 ~]# docker images
+REPOSITORY                                            TAG                 IMAGE ID            CREATED             SIZE
+registry.access.redhat.com/rhel7/pod-infrastructure   latest              34d3450d733b        2 weeks ago         205 MB
+registry:5000/pod-infrastructure                      latest              34d3450d733b        2 weeks ago         205 MB
+gcr.io/google_containers/kubernetes-dashboard-amd64   v1.5.1              1180413103fd        5 weeks ago         103.6 MB
+registry:5000/kubernetes-dashboard-amd64              v1.5.1              1180413103fd        5 weeks ago         103.6 MB
+gcr.io/google_containers/kubedns-amd64                1.7                 bec33bc01f03        5 months ago        55.06 MB
+[root@K8s-node-2 ~]#
+
+
+3、更改所使用的镜像名称
+
+　　Dashboard是在yaml中定义的，要更改dashboard.yaml中对应的“image: gcr.io/google_containers/kubernetes-dashboard-amd64:v1.5.1”为“image: registry:5000/kubernetes-dashboard-amd64:v1.5.1”
+
+　　pod-infrastructure是在node的kubelet配置文件中定义的，要更改每个node中/etc/kubernetes/kubelet中对应的“KUBELET_POD_INFRA_CONTAINER="--pod-infra-container-image=registry.access.redhat.com/rhel7/pod-infrastructure:latest"为“KUBELET_POD_INFRA_CONTAINER="--pod-infra-container-image= registry:5000/pod-infrastructure:latest "”。更改之后需要重启kubelet服务。
+4、重建dashboard应用
+
+　　执行完基于kubernetes集群部署DashBoard中的“销毁应用”之后，再次执行“启动”，即可完成dashboard的重建。

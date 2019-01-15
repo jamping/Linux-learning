@@ -1,0 +1,243 @@
+基于Kubernetes集群部署skyDNS服务
+　　
+在之前几篇文章的基础，（Centos7部署Kubernetes集群、基于kubernetes集群部署DashBoard、为Kubernetes集群部署本地镜像仓库），本文继续搭建Kubernete中的服务注册发现机制——SkyDNS.
+1、部署Cluster DNS
+1.1 原理
+
+　　通过前面对Kubernetes的讨论（Kubernetes核心概念总结）．我们已经知道，每个Kubernetes service都绑定了一个虚拟IP 地址（ClusterIP），而且Kubernetes最初使用向pod中注入环境变量的方式实现服务发现，但这会带来环境变量泛滥等问题。故需要增加集群DNS服务为每个service映射一个域名。到Kubernetes v1.2版本时，DNS作为一个系统可选插件集成到Kubernetes集群中。Kubernetes默认使用SkyDNS 作为集群的DNS服务器，
+
+　　kubernetes可以为pod提供dns（skyDNS）内部域名解析服务。其主要作用是为pod提供可以直接通过service的名字解析为对应service的ip的功能。启用了集群DNS选项，需要创建一个运行SkyDNS域名服务器的pod和一个对外提供集群service域名解析服务的SkyDNS service，并且还会为该service绑定一个稳定的静态IP地址作为入口IP地址。然后，Kubelet被配置成向每个Docker容器传人SkyDNS service的IP地址。作为它们其中一个DNS服务器。每个在Kubernetes集群中定义的service包括DNS服务器本身对应的service都会被映射到一个DNS域名，该域名一般由两个部分组成：service所在namespace和service名。默认情况下，一个客户端pod的DNS搜索列表一般包含pod自身的namespace和集群的默认域名集。SkyDNS service的域名搜索顺序大致如下。
+
+　　　　搜索客户端pod所在namespace中所有的service域名记录；
+
+　　　　搜索目标域名namespace中所有的service域名记录；
+
+　　　　从当前Kubernetes集群中，搜索所有的service域名记录。
+
+　　skyDNS由三部分组成：kube2sky、etcd、skydns。
+
+　　　　kube2sky的功能是监测api-server中的service的变化，当service创建、删除、修改时，获取对应的service信息，将其保存在etcd的中；
+
+　　　　Etcd的功能是存储kube2sky保存过来的数据；
+
+　　　　Skydns。在kubelet创建pod时，会使用为kubelet配置的“KUBELET_ARGS="--cluster-dns=10.254.10.2 --cluster-domain=sky --allow-privileged=true"” 在创建的pod中从而使用对应的dns服务器。而这一dns解析服务，实际是由Skydns提供的。
+1.2 配置etcd中关于skyDNS的key
+
+[root@k8s-master ~]# etcdctl mk /skydns/config '{"dns-addr":"10.254.10.2:53","ttl":3600,"domain":"sky."}'
+{"dns-addr":"10.254.10.2:53","ttl":3600,"domain":"sky."}
+
+1.3 配置kubelet中相关信息
+
+　　在每个node中更改kubelet的配置文件如下红色部分，更改完成之后重启服务。
+
+
+[root@K8s-node-1 ~]# vim /etc/kubernetes/kubelet
+
+###
+# kubernetes kubelet (minion) config
+
+# The address for the info server to serve on (set to 0.0.0.0 or "" for all interfaces)
+KUBELET_ADDRESS="--address=0.0.0.0"
+
+# The port for the info server to serve on
+# KUBELET_PORT="--port=10250"
+
+# You may leave this blank to use the actual hostname
+#KUBELET_HOSTNAME="--hostname-override=127.0.0.1"
+KUBELET_HOSTNAME="--hostname-override=k8s-node-1"
+
+# location of the api-server
+KUBELET_API_SERVER="--api-servers=http://k8s-master:8080"
+
+# pod infrastructure container
+KUBELET_POD_INFRA_CONTAINER="--pod-infra-container-image=registry.access.redhat.com/rhel7/pod-infrastructure:latest"
+
+# Add your own!
+KUBELET_ARGS="--cluster-dns=10.254.10.2 --cluster-domain=sky --allow-privileged=true"
+
+[root@k8s-node-1 ~]# systemctl restart kubelet.service
+
+
+1.4 yaml文件
+
+　　编辑skydns_dpm.yaml文件，更改以下红色部分（拷贝到机器上之后，最好把中文注释去掉）：
+
+
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: kube-dns
+  namespace: kube-system
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        name: kube-dns
+        tier: platform
+        subsystem: unconfirmed
+        k8s-app: kube-dns
+        version: v9
+        partition: "no"
+        kubernetes.io/cluster-service: "true"
+    spec:
+      containers:
+      - name: kube2sky
+      #填写你自己的镜像名称
+        image: gcr.io/google_containers/kube2sky:1.11
+        resources:
+          limits:
+            cpu: 100m
+            memory: 50Mi
+        args:
+        # 同etcd中配置的/skydns/config中的domain名
+        - -domain=sky
+        # master地址
+        - --kube_master_url=http://10.0.251.148:8080
+        # etcd地址
+        - -etcd-server=http://10.0.251.148:2379
+      - name: skydns
+        #你的镜像名称
+        image: gcr.io/google_containers/skydns:2015-10-13-8c72f8c 
+        resources:
+          limits:
+            cpu: 100m
+            memory: 50Mi
+        args:
+        # command = "/skydns"
+        # etcd地址
+        - -machines=http://10.0.251.148:2379
+        - -addr=0.0.0.0:53
+        - -ns-rotate=false
+        #同etcd中配置的/skydns/config中的domain名，最后有‘点’
+        - -domain=sky.
+        ports:
+        - containerPort: 53
+          name: dns
+          protocol: UDP
+        - containerPort: 53
+          name: dns-tcp
+          protocol: TCP
+      dnsPolicy: Default  # Don't use cluster DNS.
+
+
+
+　　编辑skydns-svc.yaml文件，更改以下红色部分:
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-dns
+  namespace: kube-system
+  labels:
+    k8s-app: kube-dns
+    kubernetes.io/cluster-service: "true"
+    kubernetes.io/name: "KubeDNS"
+spec:
+  selector:
+    k8s-app: kube-dns
+  clusterIP: 10.254.10.2
+  ports:
+  - name: dns
+    port: 53
+    protocol: UDP
+  - name: dns-tcp
+    port: 53
+    protocol: TCP
+
+
+1.5 启动
+
+　　在master执行如下命令：
+
+kubectl create -f skydns_dpm.yaml 
+kubectl create -f skydns-svc.yaml
+
+　　之后，dns搭建完成。
+
+
+[root@k8s-master yaml]# kubectl get deployment --all-namespaces
+NAMESPACE     NAME   DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+kube-system   kube-dns        1         1         1            1           2m
+kube-system kubernetes-dashboard-latest   1         1         1            1           1d
+[root@k8s-master yaml]# kubectl get pod  -o wide  --all-namespaces
+NAMESPACE     NAME   READY     STATUS    RESTARTS   AGE       IP          NODE
+kube-system   kube-dns-520758324-1luff   2/2       Running   0  2m   10.0.28.2   k8s-node-1
+kube-system kubernetes-dashboard-latest-127826951-pxrpk 1/1 Running   0  1d   10.0.62.2   k8s-node-2
+
+
+1.6 DNS功能验证
+1.6.1 创建测试service
+
+
+[root@k8s-master yaml]# cat test_svc.yml 
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: mysql
+    role: service
+  name: mysql-service
+spec:
+  ports:
+    - port: 3306
+      targetPort: 3306
+  type: NodePort
+  selector:
+name: mysql
+
+[root@k8s-master yaml]# kubectl create -f test_svc.yml
+service "mysql-service" created
+[root@k8s-master yaml]#  kubectl get service
+NAME            CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+kubernetes      10.254.0.1      <none>        443/TCP    1d
+mysql-service   10.254.61.203   <nodes>       3306/TCP   6s
+
+
+1.6.2 创建测试pod
+
+
+[root@k8s-master yaml]# cat busybox.yml 
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    name: busybox
+    role: master
+  name: busybox
+spec:
+  containers:
+    - name: busybox
+      image: docker.io/busybox  
+      command:
+      - sleep
+      - "360000"
+
+[root@k8s-master yaml]# kubectl create -f busybox.yml
+pod "busybox" created
+[root@k8s-master yaml]# kubectl get pod  -o wide  --all-namespaces
+NAMESPACE     NAME   READY     STATUS RESTARTS AGE IP          NODE
+default       busybox 1/1       Running   0    18s       10.0.62.3   k8s-node-2
+kube-system   kube-dns-520758324-1luff   2/2 Running   0     33m 10.0.28.2  k8s-node-1
+kube-system kubernetes-dashboard-latest-127826951-pxrpk 1/1 Running 0 1d  10.0.62.2 k8s-node-2
+
+
+1.6.3 进入pod验证服务解析
+
+
+[root@k8s-master yaml]# kubectl exec -i -t busybox sh
+/ # cat /etc/resolv.conf 
+search default.svc.sky svc.sky sky openstacklocal
+nameserver 10.254.10.2
+nameserver 10.0.251.90
+nameserver 192.168.5.225
+nameserver 192.168.5.226
+options ndots:5
+/ #
+/ #  ping mysql-service  
+PING mysql-service (10.254.61.203): 56 data bytes
+
+
+
+ 

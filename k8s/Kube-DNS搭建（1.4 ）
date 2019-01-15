@@ -1,0 +1,273 @@
+ Kube-DNS搭建（1.4版本）
+ 
+1、介绍
+
+　　之前介绍过DNS的搭建（基于Kubernetes集群部署skyDNS服务），但那个版本的DNS是随着Kubernetes1.2发布出来的，有点原始。本文主要讲解Kubernetes1.4版本中的DNS插件的安装。与1.2版本相比，1.4中的DNS增加了解析Pod（HostName）对应的域名的新功能，且在部署上也有了一些变化。1.2中，需要部署etcd（或使用master上的Etcd）、kube2sky、skydns三个组件；1.4中，DNS组件由kubedns（监控Kubernetes中service变化）、dnsmasq（DNS服务）和一个健康检查容器——healthz组成。
+
+　　在搭建PetSet（宠物应用）时，系统首先要为PetSet设置一个HeadLess service，即service的ClusterIP显示的设置成none，而对每一个有特定名称的Pet（Named Pod），可以通过其HostName进行寻址访问。这就用到了1.4中的新功能。以下给出具体的搭建过程。
+2、修改配置
+2.1修改各个node上的kubelet
+
+　　修改以下红色部分，完成后重启kubelet服务。
+
+
+[root@k8s-node-1 ~]# cat /etc/kubernetes/kubelet 
+###
+# kubernetes kubelet (minion) config
+
+# The address for the info server to serve on (set to 0.0.0.0 or "" for all interfaces)
+KUBELET_ADDRESS="--address=0.0.0.0"
+
+# The port for the info server to serve on
+# KUBELET_PORT="--port=10250"
+
+# You may leave this blank to use the actual hostname
+#KUBELET_HOSTNAME="--hostname-override=127.0.0.1"
+KUBELET_HOSTNAME="--hostname-override=k8s-node-1"
+
+# location of the api-server
+KUBELET_API_SERVER="--api-servers=http://k8s-master:8080"
+
+# pod infrastructure container
+KUBELET_POD_INFRA_CONTAINER="--pod-infra-container-image=registry.access.redhat.com/rhel7/pod-infrastructure:latest"
+
+# Add your own!
+#KUBELET_ARGS=""
+KUBELET_ARGS="--cluster-dns=10.254.10.2 --cluster-domain=cluster.local. --allow-privileged=true"
+[root@k8s-node-1 ~]# systemctl restart kubelet.service
+
+
+2.2修改APIserver
+
+　　修改以下红色部分：
+
+
+[root@k8s-master ~]# cat /etc/kubernetes/apiserver 
+###
+# kubernetes system config
+#
+# The following values are used to configure the kube-apiserver
+#
+
+# The address on the local server to listen to.
+KUBE_API_ADDRESS="--insecure-bind-address=0.0.0.0"
+
+# The port on the local server to listen on.
+KUBE_API_PORT="--port=8080"
+
+# Port minions listen on
+# KUBELET_PORT="--kubelet-port=10250"
+
+# Comma separated list of nodes in the etcd cluster
+KUBE_ETCD_SERVERS="--etcd-servers=http://etcd:2379"
+
+# Address range to use for services
+KUBE_SERVICE_ADDRESSES="--service-cluster-ip-range=10.254.0.0/16"
+
+# default admission control policies
+KUBE_ADMISSION_CONTROL="--admission-control=NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContextDeny,ResourceQuota"
+
+# Add your own!
+KUBE_API_ARGS=""
+
+
+2.3 修改yaml文件
+
+　　修改以下红色部分：
+
+
+[root@k8s-master dns14]# cat kube-dns-rc_14.yaml 
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: kube-dns-v20
+  namespace: kube-system
+  labels:
+    k8s-app: kube-dns
+    version: v20
+    kubernetes.io/cluster-service: "true"
+spec:
+  replicas: 1
+  selector:
+    k8s-app: kube-dns
+    version: v20
+  template:
+    metadata:
+      labels:
+        k8s-app: kube-dns
+        version: v20
+      annotations:
+        scheduler.alpha.kubernetes.io/critical-pod: ''
+        scheduler.alpha.kubernetes.io/tolerations: '[{"key":"CriticalAddonsOnly", "operator":"Exists"}]'
+    spec:
+      containers:
+      - name: kubedns
+        image: gcr.io/google_containers/kubedns-amd64:1.8
+        imagePullPolicy: IfNotPresent
+        resources:
+          # TODO: Set memory limits when we've profiled the container for large
+          # clusters, then set request = limit to keep this container in
+          # guaranteed class. Currently, this container falls into the
+          # "burstable" category so the kubelet doesn't backoff from restarting it.
+          limits:
+            memory: 170Mi
+          requests:
+            cpu: 100m
+            memory: 70Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz-kubedns
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: 8081
+            scheme: HTTP
+          # we poll on pod startup for the Kubernetes master service and
+          # only setup the /readiness HTTP server once that's available.
+          initialDelaySeconds: 3
+          timeoutSeconds: 5
+        args:
+        # command = "/kube-dns"
+        - --domain=cluster.local. 
+        - --dns-port=10053
+        - --kube-master-url=http://10.0.251.148:8080
+        ports:
+        - containerPort: 10053
+          name: dns-local
+          protocol: UDP
+        - containerPort: 10053
+          name: dns-tcp-local
+          protocol: TCP
+      - name: dnsmasq
+        image: gcr.io/google_containers/kube-dnsmasq-amd64:1.4.1
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          httpGet:
+            path: /healthz-dnsmasq
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        args:
+        - --cache-size=1000
+        - --no-resolv
+        - --server=127.0.0.1#10053
+        - --log-facility=-
+        ports:
+        - containerPort: 53
+          name: dns
+          protocol: UDP
+        - containerPort: 53
+          name: dns-tcp
+          protocol: TCP
+      - name: healthz
+        image: gcr.io/google_containers/exechealthz-amd64:1.2
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            memory: 50Mi
+          requests:
+            cpu: 10m
+            # Note that this container shouldn't really need 50Mi of memory. The
+            # limits are set higher than expected pending investigation on #29688.
+            # The extra memory was stolen from the kubedns container to keep the
+            # net memory requested by the pod constant.
+            memory: 50Mi
+        args:
+        - --cmd=nslookup kubernetes.default.svc.cluster.local. 127.0.0.1 >/dev/null
+        - --url=/healthz-dnsmasq
+        - --cmd=nslookup kubernetes.default.svc.cluster.local. 127.0.0.1:10053 >/dev/null
+        - --url=/healthz-kubedns
+        - --port=8080
+        - --quiet
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+      dnsPolicy: Default  # Don't use cluster DNS.
+[root@k8s-master dns14]# cat kube-dns-svc_14.yaml 
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-dns
+  namespace: kube-system
+  labels:
+    k8s-app: kube-dns
+    kubernetes.io/cluster-service: "true"
+    kubernetes.io/name: "KubeDNS"
+spec:
+  selector:
+    k8s-app: kube-dns
+  clusterIP: 10.254.10.2
+  ports:
+  - name: dns
+    port: 53
+    protocol: UDP
+  - name: dns-tcp
+    port: 53
+    protocol: TCP
+[root@k8s-master dns14]#
+
+
+2.4 下载镜像
+
+docker pull gcr.io/google_containers/kubedns-amd64:1.8
+docker pull gcr.io/google_containers/kube-dnsmasq-amd64:1.4.1
+docker pull gcr.io/google_containers/exechealthz-amd64:1.2
+
+3、启动
+
+[root@k8s-master dns14]# kubectl create -f kube-dns-rc_14.yaml 
+replicationcontroller "kube-dns-v20" created
+[root@k8s-master dns14]# kubectl create -f kube-dns-svc_14.yaml 
+service "kube-dns" created
+
+4、验证
+
+　　注意，以下演示中的web-0与web-1是两个“Named Pod”，是通过创建PetSet创建出来的Pod。详细介绍请参见后续文章。
+
+
+[root@k8s-master dns14]# kubectl get pod -o wide
+NAME         READY     STATUS    RESTARTS   AGE       IP          NODE
+frontend-service-1988680557-xuysd   1/1  Running   0   3h        10.0.82.5   k8s-node-4
+web-0                   1/1   Running   0          3h        10.0.28.3   k8s-node-1
+web-1                  1/1    Running   0            3h    10.0.82.6   k8s-node-4
+[root@k8s-master dns14]# kubectl get svc mysql-service
+NAME            CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+mysql-service   10.254.194.71   <nodes>       3306/TCP   4h
+[root@k8s-master dns14]# kubectl exec -ti frontend-service-1988680557-xuysd /bin/bash
+[root@frontend-service-1988680557-xuysd /]# nslookup web-0.nginx                                                                                                                                                                                                             
+Server:        10.254.10.2
+Address:    10.254.10.2#53
+
+Name:    web-0.nginx.default.svc.cluster.local
+Address: 10.0.28.3
+
+[root@frontend-service-1988680557-xuysd /]# nslookup web-1.nginx
+Server:        10.254.10.2
+Address:    10.254.10.2#53
+
+Name:    web-1.nginx.default.svc.cluster.local
+Address: 10.0.82.6
+
+[root@frontend-service-1988680557-xuysd /]# nslookup web-1.nginx.default.svc.cluster.local
+Server:        10.254.10.2
+Address:    10.254.10.2#53
+
+Non-authoritative answer:
+Name:    web-1.nginx.default.svc.cluster.local
+Address: 10.0.82.6
+[root@frontend-service-1988680557-xuysd /]# nslookup mysql-service
+Server:        10.254.10.2
+Address:    10.254.10.2#53
+
+Name:    mysql-service.default.svc.cluster.local
+Address: 10.254.194.71
+
