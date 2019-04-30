@@ -1,0 +1,274 @@
+ GlusterFS分布式存储
+
+一、glusterfs简介
+
+Glusterfs是一个开源的分布式文件系统，是Scale存储的核心，能够处理千数量级的客户端。是整合了许多存储块（server）通过Infiniband RDMA或者 Tcp/Ip方式互联的一个并行的网络文件系统。
+
+　　特征：
+
+    容量可以按比例的扩展，且性能却不会因此而降低。
+    廉价且使用简单，完全抽象在已有的文件系统之上。
+    扩展和容错设计的比较合理，复杂度较低
+    适应性强，部署方便，对环境依赖低，使用，调试和维护便利
+
+二、glusterfs安装部署
+
+一般在企业中，采用的是分布式复制卷，因为有数据备份，数据相对安全。
+
+　网络要求全部千兆环境，gluster 服务器至少有 2 块网卡，1 块网卡绑定供 gluster 使用，剩余一块分配管理网络 IP，用于系统管理。如果有条件购买万兆交换机，服务器配置万兆网卡，存储性能会更好。网络方面如果安全性要求较高，可以多网卡绑定。
+
+　跨地区机房配置 Gluster，在中国网络格局下不适用。
+
+    注意：GlusterFS将其动态生成的配置文件存储在/var/lib/glusterd中。如果在任何时候GlusterFS无法写入这些文件（例如，当后备文件系统已满），它至少会导致您的系统不稳定的行为; 或者更糟糕的是，让您的系统完全脱机。建议为/var/log等目录创建单独的分区，以确保不会发生这种情况。
+
+1、安装glusterfs前的环境准备　
+
+　　1.1、服务规划：
+操作系统 	    IP 	        主机名 	                 硬盘数量（三块）
+centos 7.6 	192.168.72.137 	glusterfs-node1 	sdb:5G  sdc:5G  sdd:5G
+centos 7.6 	192.168.72.138 	glusterfs-node2 	sdb:5G  sdc:5G  sdd:5G
+centos 7.6 	192.168.72.139 	glusterfs-node3 	sdb:5G  sdc:5G  sdd:5G
+centos 7.6 	192.168.72.140 	glusterfs-node4 	sdb:5G  sdc:5G  sdd:5G
+
+1.2、首先关闭iptables和selinux，配置hosts文件如下（全部glusterfs主机）
+
+注：node01~node04所有的主机hosts文件均为此内容；同时全部修改为对应的主机名，
+centos7修改主机名方式：#hostnamectl set-hostname 主机名 （即为临时和永久生效）
+
+cat <<EOF >>/etc/hosts
+192.168.72.137 glusterfs-node1
+192.168.72.138 glusterfs-node2
+192.168.72.139 glusterfs-node3
+192.168.72.140 glusterfs-node4
+EOF
+
+systemctl stop firewalld.service       #停止firewalld
+systemctl disable firewalld.service    #禁止firewalld开机自启
+sed -i 's#SELINUX=enforcing#SELINUX=disabled#g' /etc/selinux/config   #关闭SELinux
+setenforce 0
+getenforce
+ntpdate time.windows.com   #同步时间
+
+1.3、安装gluterfs源（全部glusterfs主机）
+
+curl -o /etc/yum.repos.d/epel.repo http://mirrors.aliyun.com/repo/epel-7.repo
+yum search  centos-release-gluster   #查看有哪些版本的glusterfs源    
+
+这里我们使用glusterfs6版本的源
+
+yum -y install centos-release-gluster6.noarch
+
+1.4、安装glusterfs(全部glusterfs主机)
+
+yum -y install glusterfs-server
+
+1.5、查看glusterfs版本并启动glusterfs服务(全部glusterfs主机)
+
+glusterfs --version
+systemctl start glusterd.service
+systemctl enable glusterd.service
+systemctl status glusterd.service
+netstat -lntup
+
+1.6、格式化磁盘(全部glusterfs主机)
+
+　　在每台主机上创建几块硬盘，做接下来的分布式存储使用
+
+　注：创建的硬盘要用xfs格式来格式化硬盘，如果用ext4来格式化硬盘的话，对于大于16TB空间格式化就无法实现了。所以这里要用xfs格式化磁盘(centos7默认的文件格式就是xfs)，并且xfs的文件格式支持PB级的数据量
+
+　如果是centos6默认是不支持xfs的文件格式，要先安装xfs支持包 yum install xfsprogs -y
+
+　　用fdisk -l 查看磁盘设备，例如查看glusterfs-node1的磁盘设备，这里的sdc、sdd、sde是新加的硬盘
+
+fdisk -l
+
+Disk /dev/sdb: 5368 MB, 5368709120 bytes
+Disk /dev/sdc: 5368 MB, 5368709120 bytes
+Disk /dev/sdd: 5368 MB, 5368709120 bytes
+
+特别说明：
+
+　　　如果磁盘大于 2T 的话就用 parted 来分区，这里我们不用分区（可以不分区）；
+　　　做分布式文件系统的时候数据盘一般不需要做 RAID，一般系统盘会做 RAID 1；
+　　　如果有raid卡的话，最好用上，raid卡有数据缓存功能，也能提高磁盘的iops，最好的话，用RAID 5；
+　　　如果都不做raid的话，也是没问题的，glusterfs也是可以保证数据的安全的。
+
+mkfs.xfs  -i size=512 /dev/sdb
+mkfs.xfs  -i size=512 /dev/sdc
+mkfs.xfs  -i size=512 /dev/sdd
+
+　　在四台机器上创建挂载块设备的目录，挂载硬盘到目录
+
+mkdir -p /data/brick{1..3}
+echo '/dev/sdb /data/brick1 xfs defaults 0 0' >> /etc/fstab
+echo '/dev/sdc /data/brick2 xfs defaults 0 0' >> /etc/fstab
+echo '/dev/sdd /data/brick3 xfs defaults 0 0' >> /etc/fstab
+
+#挂载
+mount -a
+
+df -h
+
+2、操作
+
+2.1、将分布式存储主机加入到信任主机池并查看加入的主机状态
+
+　随便在一个开启glusterfs服务的主机上将其他主机加入到一个信任的主机池里，这里选择glusterfs-node01
+
+gluster peer probe glusterfs-node02
+gluster peer probe glusterfs-node03
+gluster peer probe glusterfs-node04
+
+查看主机池中主机的状态
+
+gluster peer status
+
+Number of Peers: 3
+
+Hostname: glusterfs-node2
+Uuid: 476b3bb8-fd26-41af-bc71-06d7a4af877c
+State: Peer in Cluster (Connected)
+
+Hostname: glusterfs-node3
+Uuid: 2f752fff-6451-4f3c-affd-69ea62677a48
+State: Peer in Cluster (Connected)
+
+Hostname: glusterfs-node4
+Uuid: cb255730-b9b5-4888-81e6-0823e51ca356
+State: Peer in Cluster (Connected)
+
+2.2、创建glusterfs卷
+
+GlusterFS 五种卷　　
+
+Distributed：分布式卷，文件通过 hash 算法随机分布到由 bricks 组成的卷上。
+Replicated: 复制式卷，类似 RAID 1，replica 数必须等于 volume 中 brick 所包含的存储服务器数，可用性高。
+Striped: 条带式卷，类似 RAID 0，stripe 数必须等于 volume 中 brick 所包含的存储服务器数，文件被分成数据块，以 Round Robin 的方式存储在 bricks 中，并发粒度是数据块，大文件性能好。
+Distributed Striped: 分布式的条带卷，volume中 brick 所包含的存储服务器数必须是 stripe 的倍数（>=2倍），兼顾分布式和条带式的功能。
+Distributed Replicated: 分布式的复制卷，volume 中 brick 所包含的存储服务器数必须是 replica 的倍数（>=2倍），兼顾分布式和复制式的功能。
+
+分布式复制卷的brick顺序决定了文件分布的位置，一般来说，先是两个brick形成一个复制关系，然后两个复制关系形成分布。
+
+企业一般用后两种，大部分会用分布式复制（可用容量为 总容量/复制份数），通过网络传输的话最好用万兆交换机，万兆网卡来做。这样就会优化一部分性能。它们的数据都是通过网络来传输的。
+
+1)
+#在信任的主机池中任意一台设备上创建卷都可以，而且创建好后可在任意设备挂载后都可以查看
+gluster volume create gv1 glusterfs-node01:/data/brick1 glusterfs-node02:/data/brick1 force      #创建分布式卷
+gluster volume start gv1    #启动卷gv1
+gluster volume info gv1     #查看gv1的配置信息
+
+mount -t glusterfs 127.0.0.1:/gv1 /opt   #挂载gv1卷
+df -h
+127.0.0.1:/gv1            10G  167M  9.9G   2% /opt
+
+cd /opt/
+touch {a..f}      #创建测试文件
+ll
+
+-rw-r--r-- 1 root root 0 Apr 30 10:46 a
+-rw-r--r-- 1 root root 0 Apr 30 10:46 b
+-rw-r--r-- 1 root root 0 Apr 30 10:46 c
+-rw-r--r-- 1 root root 0 Apr 30 10:46 d
+-rw-r--r-- 1 root root 0 Apr 30 10:46 e
+-rw-r--r-- 1 root root 0 Apr 30 10:46 f
+
+# 在glusterfs-node4也可看到新创建的文件，信任存储池中的每一台主机挂载这个卷后都可以看到
+mount -t glusterfs 127.0.0.1:/gv1 /opt
+ll /opt/
+
+-rw-r--r-- 1 root root 0 Apr 30 10:46 a
+-rw-r--r-- 1 root root 0 Apr 30 10:46 b
+-rw-r--r-- 1 root root 0 Apr 30 10:46 c
+-rw-r--r-- 1 root root 0 Apr 30 10:46 d
+-rw-r--r-- 1 root root 0 Apr 30 10:46 e
+-rw-r--r-- 1 root root 0 Apr 30 10:46 f
+
+[root@gluster-node1 opt]# ll /data/brick1
+total 0
+-rw-r--r-- 2 root root 0 Apr 30 10:46 a
+-rw-r--r-- 2 root root 0 Apr 30 10:46 b
+-rw-r--r-- 2 root root 0 Apr 30 10:46 c
+-rw-r--r-- 2 root root 0 Apr 30 10:46 e
+
+[root@gluster-node2 ~]# ll /data/brick1
+total 0
+-rw-r--r-- 2 root root 0 Apr 30 10:46 d
+-rw-r--r-- 2 root root 0 Apr 30 10:46 f
+
+#文件实际存在位置node1和node2上的/data/brick1目录下,通过hash分别存到node1和node2上的分布式磁盘上
+
+2)配置复制卷
+
+注：复制模式，既AFR, 创建volume 时带 replica x 数量: 将文件复制到 replica x 个节点中。
+这条命令的意思是使用Replicated的方式，建立一个名为gv2的卷(Volume)，存储块(Brick)为2个，分别为node1:/data/brick2和node2:/data/brick2；
+fore为强制创建：因为复制卷在双方主机通信有故障再恢复通信时容易发生脑裂。本次为实验环境，生产环境不建议使用。
+
+gluster volume create gv2 replica 2 glusterfs-node1:/data/brick2 glusterfs-node2:/data/brick2 force 
+gluster volume start gv2    #启动gv2卷
+gluster volume info gv2   #查看gv2信息
+
+mount -t glusterfs 127.0.0.1:/gv2 /mnt
+df -h
+127.0.0.1:/gv2           5.0G   84M  5.0G   2% /mnt
+
+cd /mnt
+touch {1..6}
+ll
+
+-rw-r--r-- 1 root root 0 Apr 30 10:57 1
+-rw-r--r-- 1 root root 0 Apr 30 10:57 2
+-rw-r--r-- 1 root root 0 Apr 30 10:57 3
+-rw-r--r-- 1 root root 0 Apr 30 10:57 4
+-rw-r--r-- 1 root root 0 Apr 30 10:57 5
+-rw-r--r-- 1 root root 0 Apr 30 10:57 6
+
+[root@gluster-node1 mnt]# ll /data/brick2
+total 0
+-rw-r--r-- 2 root root 0 Apr 30 10:57 1
+-rw-r--r-- 2 root root 0 Apr 30 10:57 2
+-rw-r--r-- 2 root root 0 Apr 30 10:57 3
+-rw-r--r-- 2 root root 0 Apr 30 10:57 4
+-rw-r--r-- 2 root root 0 Apr 30 10:57 5
+-rw-r--r-- 2 root root 0 Apr 30 10:57 6
+
+[root@gluster-node2 ~]# ll /data/brick2
+total 0
+-rw-r--r-- 2 root root 0 Apr 30 10:57 1
+-rw-r--r-- 2 root root 0 Apr 30 10:57 2
+-rw-r--r-- 2 root root 0 Apr 30 10:57 3
+-rw-r--r-- 2 root root 0 Apr 30 10:57 4
+-rw-r--r-- 2 root root 0 Apr 30 10:57 5
+-rw-r--r-- 2 root root 0 Apr 30 10:57 6
+
+创建文件的实际存在位置为node1和node2上的/data/brick2目录下，因为是复制卷，这两个目录下的内容是完全一致的。
+
+3)配置条带卷
+gluster volume create gv3 stripe 2 glusterfs-node1:/data/brick3 glusterfs-node2:/data/brick3 force
+gluster volume start gv3
+gluster volume info gv3
+
+条带卷在生产环境是很少使用的，因为它会将文件破坏，比如一个图片，它会将图片一份一份地分别存到条带卷中的brick上
+
+4)配置分布式复制卷
+
+最少需要4台服务器才能创建,生产场景推荐使用此种方式
+将原有的复制卷gv2进行扩容，使其成为分布式复制卷；
+要扩容前需停掉gv2
+gluster volume stop gv2
+gluster volume add-brick gv2 replica 2 glusterfs-node3:/data/brick1 glusterfs-node4:/data/brick1 force  #添加brick到gv2中
+gluster volume start gv2
+gluster volume info gv2
+
+分布式复制卷的最佳实践：
+
+　1)搭建条件
+　 - 块服务器的数量必须是复制的倍数
+   - 将按块服务器的排列顺序指定相邻的块服务器成为彼此的复制
+例如，8台服务器：
+ - 当复制副本为2时，按照服务器列表的顺序，服务器1和2作为一个复制,3和4作为一个复制,5和6作为一个复制,7和8作为一个复制
+ - 当复制副本为4时，按照服务器列表的顺序，服务器1/2/3/4作为一个复制,5/6/7/8作为一个复制
+ 2)创建分布式复制卷
+
+
+磁盘存储的平衡
+平衡布局是很有必要的，因为布局结构是静态的，当新的 bricks 加入现有卷，新创建的文件会分布到旧的 bricks 中，所以需要平衡布局结构，使新加入的 bricks 生效。布局平衡只是使新布局生效，并不会在新的布局中移动老的数据，如果你想在新布局生效后，重新平衡卷中的数据，还需要对卷中的数据进行平衡。
