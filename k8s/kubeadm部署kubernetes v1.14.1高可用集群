@@ -1,0 +1,576 @@
+kubeadm部署kubernetes v1.14.1高可用集群
+
+高可用简介
+
+kubernetes高可用部署参考：
+https://kubernetes.io/docs/setup/independent/high-availability/
+https://github.com/kubernetes-sigs/kubespray
+https://github.com/wise2c-devops/breeze
+https://github.com/cookeem/kubeadm-ha
+拓扑选择
+
+配置高可用（HA）Kubernetes集群，有以下两种可选的etcd拓扑：
+
+    集群master节点与etcd节点共存，etcd也运行在控制平面节点上
+    使用外部etcd节点，etcd节点与master在不同节点上运行
+
+堆叠的etcd拓扑
+堆叠HA集群是这样的拓扑，其中etcd提供的分布式数据存储集群与由kubeamd管理的运行master组件的集群节点堆叠部署。
+每个master节点运行kube-apiserver，kube-scheduler和kube-controller-manager的一个实例。kube-apiserver使用负载平衡器暴露给工作节点。
+每个master节点创建一个本地etcd成员，该etcd成员仅与本节点kube-apiserver通信。这同样适用于本地kube-controller-manager 和kube-scheduler实例。
+该拓扑将master和etcd成员耦合在相同节点上。比设置具有外部etcd节点的集群更简单，并且更易于管理复制。
+但是，堆叠集群存在耦合失败的风险。如果一个节点发生故障，则etcd成员和master实例都将丢失，并且冗余会受到影响。您可以通过添加更多master节点来降低此风险。
+因此，您应该为HA群集运行至少三个堆叠的master节点。
+这是kubeadm中的默认拓扑。使用kubeadm init和kubeadm join --experimental-control-plane命令时，在master节点上自动创建本地etcd成员。
+
+外部etcd拓扑
+具有外部etcd的HA集群是这样的拓扑，其中由etcd提供的分布式数据存储集群部署在运行master组件的节点形成的集群外部。
+像堆叠ETCD拓扑结构，在外部ETCD拓扑中的每个master节点运行一个kube-apiserver，kube-scheduler和kube-controller-manager实例。并且kube-apiserver使用负载平衡器暴露给工作节点。但是，etcd成员在不同的主机上运行，每个etcd主机与kube-apiserver每个master节点进行通信。
+此拓扑将master节点和etcd成员分离。因此，它提供了HA设置，其中丢失master实例或etcd成员具有较小的影响并且不像堆叠的HA拓扑那样影响集群冗余。
+但是，此拓扑需要两倍于堆叠HA拓扑的主机数。具有此拓扑的HA群集至少需要三个用于master节点的主机和三个用于etcd节点的主机。
+
+部署要求
+
+使用kubeadm部署高可用性Kubernetes集群的两种不同方法：
+
+    使用堆叠master节点。这种方法需要较少的基础设施，etcd成员和master节点位于同一位置。
+    使用外部etcd集群。这种方法需要更多的基础设施， master节点和etcd成员是分开的。
+
+在继续之前，您应该仔细考虑哪种方法最能满足您的应用程序和环境的需求。
+部署要求
+
+    至少3个master节点
+    至少3个worker节点
+    所有节点网络全部互通（公共或私有网络）
+    所有机器都有sudo权限
+    从一个设备到系统中所有节点的SSH访问
+    所有节点安装kubeadm和kubelet，kubectl是可选的。
+    针对外部etcd集群，你需要为etcd成员额外提供3个节点
+
+负载均衡
+
+部署集群前首选需要为kube-apiserver创建负载均衡器。
+注意：负载平衡器有许多中配置方式。可以根据你的集群要求选择不同的配置方案。在云环境中，您应将master节点作为负载平衡器TCP转发的后端。此负载平衡器将流量分配到其目标列表中的所有健康master节点。apiserver的运行状况检查是对kube-apiserver侦听的端口的TCP检查（默认值:6443）。
+负载均衡器必须能够与apiserver端口上的所有master节点通信。它还必须允许其侦听端口上的传入流量。另外确保负载均衡器的地址始终与kubeadm的ControlPlaneEndpoint地址匹配。
+haproxy/nignx+keepalived是其中可选的负载均衡方案，针对公有云环境可以直接使用运营商提供的负载均衡产品。
+部署时首先将第一个master节点添加到负载均衡器并使用以下命令测试连接：
+
+# nc -v LOAD_BALANCER_IP PORT
+
+由于apiserver尚未运行，因此预计会出现连接拒绝错误。但是，超时意味着负载均衡器无法与master节点通信。如果发生超时，请重新配置负载平衡器以与master节点通信。将剩余的master节点添加到负载平衡器目标组。
+
+第2章 部署集群
+本次使用kubeadm部署kubernetes v1.14.1高可用集群，包含3个master节点和1个node节点，部署步骤以官方文档为基础，负载均衡部分采用haproxy+keepalived容器方式实现。所有组件版本以kubernetes v1.14.1为准，其他组件以当前最新版本为准。
+基本配置
+
+节点信息：
+主机名 	           IP地址 	     角色 	    OS 	   CPU/MEM 	磁盘（可选） 	网卡
+k8s-master1 	192.168.72.132	master 	CentOS7.5 	2C2G 	系统盘20G 	1块
+k8s-master2 	192.168.92.141 	master 	CentOS7.5 	2C2G 	系统盘20G 	1块
+k8s-master3 	192.168.92.142 	master 	CentOS7.5	2C2G 	系统盘20G 	1块
+k8s-master3 	192.168.92.142 	master 	CentOS7.5	2C2G 	系统盘20G 	1块
+k8s-node1 	    192.168.72.133 	node 	CentOS7.5 	2C2G 	系统盘20G 	1块
+k8s-node2 	    192.168.72.134 	node 	CentOS7.5 	2C2G 	系统盘20G 	1块
+k8s-node3 	    192.168.72.135 	node 	CentOS7.5 	2C2G 	系统盘20G 	1块
+K8S VIP 	    192.168.72.30 	– 	– 	– 	- 	-
+
+以下操作在分别执行。
+
+hostnamectl set-hostname k8s-master1
+hostnamectl set-hostname k8s-master2
+hostnamectl set-hostname k8s-master3
+hostnamectl set-hostname k8s-node1
+hostnamectl set-hostname k8s-node2
+hostnamectl set-hostname k8s-node3
+
+以下操作在全别执行。
+
+#修改/etc/hosts 
+
+cat >> /etc/hosts << EOF
+192.168.72.132 k8s-master1
+192.168.72.141 k8s-master2
+192.168.72.142 k8s-master3
+192.168.72.133 k8s-node1
+192.168.72.134 k8s-node2
+192.168.72.135 k8s-node3
+EOF
+
+ # 开启firewalld防火墙并允许所有流量
+
+systemctl start firewalld && systemctl enable firewalld 
+firewall-cmd --set-default-zone=trusted 
+firewall-cmd --complete-reload 
+
+# 关闭selinux 
+
+sed -i 's/^SELINUX=enforcing$/SELINUX=disabled/' /etc/selinux/config && setenforce 0 
+
+#关闭swap 
+
+swapoff -a yes | cp /etc/fstab /etc/fstab_bak cat /etc/fstab_bak | grep -v swap > /etc/fstab
+
+配置时间同步
+使用chrony同步时间，centos7默认已安装，这里修改时钟源，所有节点与网络时钟源同步：
+
+# 安装chrony： 
+yum install -y chrony 
+cp /etc/chrony.conf{,.bak}
+
+# 注释默认ntp服务器 
+
+sed -i 's/^server/#&/' /etc/chrony.conf 
+
+# 指定上游公共 ntp 服务器 
+
+cat >> /etc/chrony.conf << EOF
+server 0.asia.pool.ntp.org iburst
+server 1.asia.pool.ntp.org iburst
+server 2.asia.pool.ntp.org iburst
+server 3.asia.pool.ntp.org iburst
+EOF
+
+# 设置时区 
+
+timedatectl set-timezone Asia/Shanghai
+
+# 重启chronyd服务并设为开机启动： 
+
+systemctl enable chronyd && systemctl restart chronyd
+
+#验证,查看当前时间以及存在带*的行 
+
+timedatectl && chronyc sources
+
+加载IPVS模块
+
+在所有的Kubernetes节点执行以下脚本（若内核大于4.19替换nf_conntrack_ipv4为nf_conntrack）: 
+
+cat > /etc/sysconfig/modules/ipvs.modules <<EOF
+#!/bin/bash
+modprobe -- ip_vs
+modprobe -- ip_vs_rr
+modprobe -- ip_vs_wrr
+modprobe -- ip_vs_sh
+modprobe -- nf_conntrack_ipv4
+EOF
+
+#执行脚本 
+
+chmod 755 /etc/sysconfig/modules/ipvs.modules && bash /etc/sysconfig/modules/ipvs.modules && lsmod | grep -e ip_vs -e nf_conntrack_ipv4
+
+#安装相关管理工具 
+
+yum install ipset ipvsadm -y
+
+配置内核参数
+
+cat > /etc/sysctl.d/k8s.conf <<EOF
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_nonlocal_bind = 1
+net.ipv4.ip_forward = 1
+vm.swappiness=0
+EOF
+
+sysctl --system
+
+安装docker
+
+CRI安装参考：https://kubernetes.io/docs/setup/cri/
+要在Pod中运行容器，Kubernetes使用容器运行时。以下是可选的容器运行时。
+
+    Docker
+    CRI-O
+    Containerd
+    Other CRI runtimes: frakti
+
+Cgroup驱动程序简介
+当systemd被选为Linux发行版的init系统时，init进程会生成并使用根控制组（cgroup）并充当cgroup管理器。Systemd与cgroup紧密集成，并将为每个进程分配cgroup。可以配置容器运行时和要使用的kubelet cgroupfs。cgroupfs与systemd一起使用意味着将有两个不同的cgroup管理器。
+Control groups用于约束分配给进程的资源。单个cgroup管理器将简化正在分配的资源的视图，并且默认情况下将具有更可靠的可用和使用资源视图。
+当我们有两个managers时，我们最终会得到两个这些资源的视图。我们已经看到了现场的情况，其中配置cgroupfs用于kubelet和Docker systemd 的节点以及在节点上运行的其余进程在资源压力下变得不稳定。
+更改设置，使容器运行时和kubelet systemd用作cgroup驱动程序，从而使系统稳定。请注意native.cgroupdriver=systemd下面Docker设置中的选项。
+
+安装并配置docker
+
+以下操作在所有节点执行。
+
+# 安装依赖软件包 
+
+yum install -y yum-utils device-mapper-persistent-data lvm2
+
+# 添加Docker repository，这里改为国内阿里云yum源 
+
+yum-config-manager \ --add-repo \ http://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+
+# 安装docker-ce 
+
+yum update -y && yum install -y docker-ce
+
+## 创建 /etc/docker 目录 
+
+mkdir /etc/docker
+
+# 配置 daemon. 
+
+cat > /etc/docker/daemon.json <<EOF
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2",
+  "storage-opts": [
+    "overlay2.override_kernel_check=true"
+  ],
+  "registry-mirrors": ["https://uyah70su.mirror.aliyuncs.com"]
+}
+EOF
+
+#注意，由于国内拉取镜像较慢，配置文件最后追加了阿里云镜像加速配置。 
+
+mkdir -p /etc/systemd/system/docker.service.d
+
+# 重启docker服务 
+
+systemctl daemon-reload && systemctl restart docker && systemctl enable docker
+
+安装负载均衡
+
+kubernetes master 节点运行如下组件：
+
+    kube-apiserver
+    kube-scheduler
+    kube-controller-manager
+
+kube-scheduler 和 kube-controller-manager 可以以集群模式运行，通过 leader 选举产生一个工作进程，其它进程处于阻塞模式。
+kube-apiserver可以运行多个实例，但对其它组件需要提供统一的访问地址，该地址需要高可用。本次部署使用 keepalived+haproxy 实现 kube-apiserver VIP 高可用和负载均衡。
+haproxy+keepalived配置vip，实现了api唯一的访问地址和负载均衡。keepalived 提供 kube-apiserver 对外服务的 VIP。haproxy 监听 VIP，后端连接所有 kube-apiserver 实例，提供健康检查和负载均衡功能。
+运行 keepalived 和 haproxy 的节点称为 LB 节点。由于 keepalived 是一主多备运行模式，故至少两个 LB 节点。
+本次部署复用 master 节点的三台机器，在所有3个master节点部署haproxy和keepalived组件，以达到更高的可用性，haproxy 监听的端口(6444) 需要与 kube-apiserver的端口 6443 不同，避免冲突。
+keepalived 在运行过程中周期检查本机的 haproxy 进程状态，如果检测到 haproxy 进程异常，则触发重新选主的过程，VIP 将飘移到新选出来的主节点，从而实现 VIP 的高可用。
+所有组件（如 kubeclt、apiserver、controller-manager、scheduler 等）都通过 VIP +haproxy 监听的6444端口访问 kube-apiserver 服务。
+
+运行HA容器
+
+使用的容器镜像为睿云智合开源项目breeze相关镜像，具体使用方法请访问：
+https://github.com/wise2c-devops
+其他选择：haproxy镜像也可以使用dockerhub官方镜像，但keepalived未提供官方镜像，可自行构建或使用dockerhub他人已构建好的镜像，本次部署全部使用breeze提供的镜像。
+在3个master节点以容器方式部署haproxy，容器暴露6444端口，负载均衡到后端3个apiserver的6443端口，3个节点haproxy配置文件相同。
+
+以下操作在master01节点执行。
+创建haproxy启动脚本
+编辑start-haproxy.sh文件，修改Kubernetes Master节点IP地址为实际Kubernetes集群所使用的值（Master Port默认为6443不用修改）：
+
+mkdir -p /data/lb
+vim /data/lb/start-haproxy.sh
+
+#!/bin/bash 
+MasterIP1=192.168.72.132
+MasterIP2=192.168.72.141
+MasterIP3=192.168.72.142
+MasterPort=6443 
+
+docker run -d --restart=always --name HAProxy-K8S -p 6444:6444 \
+           -e MasterIP1=$MasterIP1 \
+           -e MasterIP2=$MasterIP2 \
+           -e MasterIP3=$MasterIP3 \
+           -e MasterPort=$MasterPort \
+           wise2c/haproxy-k8s
+
+
+创建keepalived启动脚本
+编辑start-keepalived.sh文件，修改虚拟IP地址VIRTUAL_IP、虚拟网卡设备名INTERFACE、虚拟网卡的子网掩码NETMASK_BIT、路由标识符RID、虚拟路由标识符VRID的值为实际Kubernetes集群所使用的值。（CHECK_PORT的值6444一般不用修改，它是HAProxy的暴露端口，内部指向Kubernetes Master 
+
+vim /data/lb/start-keepalived.sh
+
+#!/bin/bash
+VIRTUAL_IP=192.168.72.30
+INTERFACE=ens33
+NETMASK_BIT=24
+CHECK_PORT=6444
+RID=10
+VRID=160
+MCAST_GROUP=224.0.0.18
+
+docker run -itd --restart=always --name=Keepalived-K8S \
+           --net=host --cap-add=NET_ADMIN \
+           -e VIRTUAL_IP=$VIRTUAL_IP \
+           -e INTERFACE=$INTERFACE \
+           -e CHECK_PORT=$CHECK_PORT \
+           -e RID=$RID -e VRID=$VRID \
+           -e NETMASK_BIT=$NETMASK_BIT \
+           -e MCAST_GROUP=$MCAST_GROUP \
+           wise2c/keepalived-k8s
+
+
+复制启动脚本到其他2个master节点
+
+[root@k8s-master2 ~]# mkdir -p /data/lb
+[root@k8s-master3 ~]# mkdir -p /data/lb
+
+scp start-haproxy.sh start-keepalived.sh 192.168.72.141:/data/lb/
+scp start-haproxy.sh start-keepalived.sh 192.168.72.142:/data/lb/
+
+分别在3个master节点运行脚本启动haproxy和keepalived容器：
+
+sh start-haproxy.sh
+sh start-keepalived.sh
+
+验证HA状态
+
+查看容器运行状态
+
+[root@k8s-master1 ~]# docker ps
+
+查看网卡绑定的vip 为192.168.92.30
+
+[root@k8s-master1 ~]# ip a | grep ens33
+
+
+查看监听端口为6444
+
+[root@k8s-master1 ~]# netstat -tnlp | grep 6444 
+
+
+keepalived配置文件中配置了vrrp_script脚本，使用nc命令对haproxy监听的6444端口进行检测，如果检测失败即认定本机haproxy进程异常，将vip漂移到其他节点。
+所以无论本机keepalived容器异常或haproxy容器异常都会导致vip漂移到其他节点，可以停掉vip所在节点任意容器进行测试。
+
+[root@k8s-master1 ~]# docker stop HAProxy-K8S 
+HAProxy-K8S
+
+#可以看到vip漂移到k8s-master02节点
+[root@k8s-master2 ~]# ip a | grep ens33
+
+也可以在本地执行该nc命令查看结果
+
+[root@k8s-master2 ~]# yum install -y nc
+[root@k8s-master2 ~]# nc -v -w 2 -z 127.0.0.1 6444 2>&1 | grep 'Connected to' | grep 6444
+Ncat: Connected to 127.0.0.1:6444.
+
+关于haproxy和keepalived配置文件可以在github源文件中参考Dockerfile，或使用docker exec -it xxx sh命令进入容器查看，容器中的具体路径：
+
+    /etc/keepalived/keepalived.conf
+    /usr/local/etc/haproxy/haproxy.cfg
+
+负载均衡部分配置完成后即可开始部署kubernetes集群。
+
+安装kubeadm
+
+以下操作在所有节点执行。
+
+#由于官方源国内无法访问，这里使用阿里云yum源进行替换：
+
+cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
+EOF
+
+#安装kubeadm、kubelet、kubectl,注意这里默认安装当前最新版本v1.14.1:
+
+yum install -y kubeadm kubelet kubectl
+systemctl enable kubelet && systemctl start kubelet
+
+初始化master节点
+
+初始化参考：
+https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-init/
+https://godoc.org/k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta1
+
+创建初始化配置文件
+可以使用如下命令生成初始化配置文件
+
+kubeadm config print init-defaults > kubeadm-config.yaml
+
+apiVersion: kubeadm.k8s.io/v1beta1
+bootstrapTokens:
+- groups:
+  - system:bootstrappers:kubeadm:default-node-token
+  token: abcdef.0123456789abcdef
+  ttl: 24h0m0s
+  usages:
+  - signing
+  - authentication
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 1.2.3.4
+  bindPort: 6443
+nodeRegistration:
+  criSocket: /var/run/dockershim.sock
+  name: k8s-master1
+  taints:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/master
+---
+apiServer:
+  timeoutForControlPlane: 4m0s
+apiVersion: kubeadm.k8s.io/v1beta1
+certificatesDir: /etc/kubernetes/pki
+clusterName: kubernetes
+controlPlaneEndpoint: "192.168.72.30:6444"
+controllerManager: {}
+dns:
+  type: CoreDNS
+etcd:
+  local:
+    dataDir: /var/lib/etcd
+imageRepository: registry.aliyuncs.com/google_containers
+kind: ClusterConfiguration
+kubernetesVersion: v1.14.0
+networking:
+  dnsDomain: cluster.local
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: 10.96.0.0/12
+scheduler: {}
+
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+featureGates:
+  SupportIPVSProxyMode: true
+mode: ipvs
+"kubeadm-config.yaml" 47L, 1065C written
+[root@k8s-master1 ~]# cat kubeadm-config.yaml 
+apiVersion: kubeadm.k8s.io/v1beta1
+bootstrapTokens:
+- groups:
+  - system:bootstrappers:kubeadm:default-node-token
+  token: abcdef.0123456789abcdef
+  ttl: 24h0m0s
+  usages:
+  - signing
+  - authentication
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 1.2.3.4
+  bindPort: 6443
+nodeRegistration:
+  criSocket: /var/run/dockershim.sock
+  name: k8s-master1
+  taints:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/master
+---
+apiServer:
+  timeoutForControlPlane: 4m0s
+apiVersion: kubeadm.k8s.io/v1beta1
+certificatesDir: /etc/kubernetes/pki
+clusterName: kubernetes
+controlPlaneEndpoint: "192.168.72.30:6444"
+controllerManager: {}
+dns:
+  type: CoreDNS
+etcd:
+  local:
+    dataDir: /var/lib/etcd
+imageRepository: registry.aliyuncs.com/google_containers
+kind: ClusterConfiguration
+kubernetesVersion: v1.14.0
+networking:
+  dnsDomain: cluster.local
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: 10.96.0.0/12
+scheduler: {}
+
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+featureGates:
+  SupportIPVSProxyMode: true
+mode: ipvs
+
+配置说明：
+
+    controlPlaneEndpoint：为vip地址和haproxy监听端口6444
+    imageRepository:由于国内无法访问google镜像仓库k8s.gcr.io，这里指定为阿里云镜像仓库registry.aliyuncs.com/google_containers
+    podSubnet:指定的IP地址段与后续部署的网络插件相匹配，这里需要部署flannel插件，所以配置为10.244.0.0/16
+    mode: ipvs:最后追加的配置为开启ipvs模式。
+
+在集群搭建完成后可以使用如下命令查看生效的配置文件：
+
+kubectl -n kube-system get cm kubeadm-config -oyaml
+
+初始化Master01节点
+
+这里追加tee命令将初始化日志输出到kubeadm-init.log中以备用（可选）。
+
+kubeadm init --config=kubeadm-config.yaml --experimental-upload-certs | tee kubeadm-init.log
+
+
+该命令指定了初始化时需要使用的配置文件，其中添加–experimental-upload-certs参数可以在后续执行加入节点时自动分发证书文件。
+初始化示例
+
+kubeadm init主要执行了以下操作：
+
+    [init]：指定版本进行初始化操作
+    [preflight] ：初始化前的检查和下载所需要的Docker镜像文件
+    [kubelet-start]：生成kubelet的配置文件”/var/lib/kubelet/config.yaml”，没有这个文件kubelet无法启动，所以初始化之前的kubelet实际上启动失败。
+    [certificates]：生成Kubernetes使用的证书，存放在/etc/kubernetes/pki目录中。
+    [kubeconfig] ：生成 KubeConfig 文件，存放在/etc/kubernetes目录中，组件之间通信需要使用对应文件。
+    [control-plane]：使用/etc/kubernetes/manifest目录下的YAML文件，安装 Master 组件。
+    [etcd]：使用/etc/kubernetes/manifest/etcd.yaml安装Etcd服务。
+    [wait-control-plane]：等待control-plan部署的Master组件启动。
+    [apiclient]：检查Master组件服务状态。
+    [uploadconfig]：更新配置
+    [kubelet]：使用configMap配置kubelet。
+    [patchnode]：更新CNI信息到Node上，通过注释的方式记录。
+    [mark-control-plane]：为当前节点打标签，打了角色Master，和不可调度标签，这样默认就不会使用Master节点来运行Pod。
+    [bootstrap-token]：生成token记录下来，后边使用kubeadm join往集群中添加节点时会用到
+    [addons]：安装附加组件CoreDNS和kube-proxy
+
+说明：无论是初始化失败或者集群已经完全搭建成功，你都可以直接执行kubeadm reset命令清理集群或节点，然后重新执行kubeadm init或kubeadm join相关操作即可。
+配置kubectl命令
+
+无论在master节点或node节点，要能够执行kubectl命令必须进行以下配置：
+root用户执行以下命令
+
+cat << EOF >> ~/.bashrc
+export KUBECONFIG=/etc/kubernetes/admin.conf
+EOF
+source ~/.bashrc
+
+普通用户执行以下命令（参考init时的输出结果）
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+等集群配置完成后，可以在所有master节点和node节点进行以上配置，以支持kubectl命令。针对node节点复制任意master节点/etc/kubernetes/admin.conf到本地。
+查看当前状态
+
+[root@k8s-master1 ~]# kubectl get nodes
+
+由于未安装网络插件，coredns处于pending状态，node处于notready状态。
+安装网络插件
+
+kubernetes支持多种网络方案，这里简单介绍常用的flannel和calico安装方法，选择其中一种方案进行部署即可。
+
+以下操作在master01节点执行即可。
+安装flannel网络插件：
+由于kube-flannel.yml文件指定的镜像从coreos镜像仓库拉取，可能拉取失败，可以从dockerhub搜索相关镜像进行替换，另外可以看到yml文件中定义的网段地址段为10.244.0.0/16。
+
+wget https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+cat kube-flannel.yml | grep image
+cat kube-flannel.yml | grep 10.244
+sed -i 's#quay.io/coreos/flannel:v0.11.0-amd64#willdockerhub/flannel:v0.11.0-amd64#g' kube-flannel.yml
+kubectl apply -f kube-flannel.yml
+
+再次查看node和 Pod状态，全部为Running
+
+安装calico网络插件（可选）：
+安装参考：https://docs.projectcalico.org/v3.6/getting-started/kubernetes/
+
+kubectl apply -f \
+https://docs.projectcalico.org/v3.6/getting-started/kubernetes/installation/hosted/kubernetes-datastore/calico-networking/1.7/calico.yaml
+
+
+注意该yaml文件中默认CIDR为192.168.0.0/16，需要与初始化时kube-config.yaml中的配置一致，如果不同请下载该yaml修改后运行。
+加入master节点
+
+从初始化输出或kubeadm-init.log中获取命令
