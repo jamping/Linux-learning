@@ -1,115 +1,658 @@
- 基于kubernetes集群部署DashBoard
+部署Dashboard
 
-　　在之前一篇文章：Centos7部署Kubernetes集群，中已经搭建了基本的K8s集群，本文将在此基础之上继续搭建K8s DashBoard。
-1、yaml文件
+kubernetes集群准备
+kubeadm部署3节点kubernetes1.13.0集群（master节点x1,node节点x2），集群部署参考：
+https://blog.csdn.net/networken/article/details/84991940
 
-　　编辑dashboard.yaml，注意或更改以下红色部分：
+官方参考文档：
+https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/#deploying-the-dashboard-ui
+github项目地址：
+https://github.com/kubernetes/dashboard
 
+这里部署dashboard v1.10.1版本。
+由于yaml配置文件中指定镜像从google拉取，先下载yaml文件到本地，修改配置从阿里云仓库拉取镜像。
+
+wget https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml
+
+修改yaml配置文件image部分，指定镜像从阿里云镜像仓库拉取：
+
+vim kubernetes-dashboard.yaml
+
+---
+# ------------------- Dashboard Deployment ------------------- #
+
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  labels:
+    k8s-app: kubernetes-dashboard
+  name: kubernetes-dashboard
+  namespace: kube-system
+spec:
+    spec:
+      containers:
+      - name: kubernetes-dashboard
+        image: registry.aliyuncs.com/google_containers/kubernetes-dashboard-amd64:v1.10.1
+        ports:
+        - containerPort: 8443
+          protocol: TCP       
+
+---
+# ------------------- Dashboard Service ------------------- #
+
+kind: Service
+apiVersion: v1
+metadata:
+  labels:
+    k8s-app: kubernetes-dashboard
+  name: kubernetes-dashboard
+  namespace: kube-system
+spec:
+  type: NodePort
+  ports:
+    - port: 443
+      targetPort: 8443
+      nodePort: 31620
+  selector:
+    k8s-app: kubernetes-dashboard
+
+然后执行以下命令部署dashboard服务：
+
+kubectl create -f kubernetes-dashboard.yaml
+
+查看Pod 的状态为running说明dashboard已经部署成功：
+
+kubectl get pod --namespace=kube-system -o wide | grep dashboard
+
+Dashboard 会在 kube-system namespace 中创建自己的 Deployment 和 Service：
+
+kubectl get deployment kubernetes-dashboard --namespace=kube-system
+kubectl get service kubernetes-dashboard --namespace=kube-system
+
+访问dashboard
+
+官方参考文档：
+https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/#accessing-the-dashboard-ui
+
+有以下几种方式访问dashboard：
+
+    Nodport方式访问dashboard，service类型改为NodePort
+    loadbalacer方式，service类型改为loadbalacer
+    Ingress方式访问dashboard
+    API server方式访问 dashboard
+    kubectl proxy方式访问dashboard
+
+NodePort方式
+
+为了便于本地访问，修改yaml文件，将service改为NodePort 类型：
+
+vim kubernetes-dashboard.yaml 
+......
+---
+# ------------------- Dashboard Service ------------------- #
+
+kind: Service
+apiVersion: v1
+metadata:
+  labels:
+    k8s-app: kubernetes-dashboard
+  name: kubernetes-dashboard
+  namespace: kube-system
+spec:
+  type: NodePort       #增加type: NodePort
+  ports:
+    - port: 443
+      targetPort: 8443
+      nodePort: 31620  #增加nodePort: 31620
+  selector:
+    k8s-app: kubernetes-dashboard
+
+重新应用yaml文件
+
+kubectl apply -f kubernetes-dashboard.yaml
+
+查看service，TYPE类型已经变为NodePort，端口为31620
+
+kubectl get service -n kube-system | grep dashboard
+
+通过浏览器访问：https://192.168.92.56:31620/， 登录界面如下：
+
+Dashboard 支持 Kubeconfig 和 Token 两种认证方式，我们这里选择Token认证方式登录：
+
+创建登录用户
+官方参考文档：
+https://github.com/kubernetes/dashboard/wiki/Creating-sample-user
+创建dashboard-adminuser.yaml：
+
+vim dashboard-adminuser.yaml
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: admin-user
+  namespace: kube-system
+
+执行yaml文件：
+
+kubectl create -f dashboard-adminuser.yaml
+
+说明：上面创建了一个叫admin-user的服务账号，并放在kube-system命名空间下，并将cluster-admin角色绑定到admin-user账户，这样admin-user账户就有了管理员的权限。默认情况下，kubeadm创建集群时已经创建了cluster-admin角色，我们直接绑定即可。
+
+查看admin-user账户的token
+
+kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | grep admin-user | awk '{print $1}')
+
+Name:         admin-user-token-8v96m
+Namespace:    kube-system
+Labels:       <none>
+Annotations:  kubernetes.io/service-account.name: admin-user
+              kubernetes.io/service-account.uid: 7c8a381b-722e-11e9-acd3-000c29810d27
+
+Type:  kubernetes.io/service-account-token
+
+Data
+====
+ca.crt:     1025 bytes
+namespace:  11 bytes
+token:      eyJhbGciOiJSUzI1NiIsImtpZCI6IiJ9.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJrdWJlLXN5c3RlbSIsImt1YmVybmV0ZXMuaW8vc2VydmljZWFjY291bnQvc2VjcmV0Lm5hbWUiOiJhZG1pbi11c2VyLXRva2VuLTh2OTZtIiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZXJ2aWNlLWFjY291bnQubmFtZSI6ImFkbWluLXVzZXIiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC51aWQiOiI3YzhhMzgxYi03MjJlLTExZTktYWNkMy0wMDBjMjk4MTBkMjciLCJzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6a3ViZS1zeXN0ZW06YWRtaW4tdXNlciJ9.md_bz2GzgDmL8skh6L3bf-85CDGIpWGQOHUhfFbMSYu05oXECJ6YFpoSHKaiBkXUo69quqeRz_dK_cqpx1HPmwDLRVuFTO5cLMvxRhN_1bpuVdd-S8mVxE14nCHA5JnMn-jt3pp0RmXtaVAnHM-AUbwttuS8LAhNgj4Vpbutkb7CPMiWMoc82bgTd_gYWsspYjk7yDrxbV6kE1BdANQC_CsBLzUtlME97hh_BfDF9GAQY4-bdQD8ZotDnmiKu2aikcadCI4-lIHWDiMBBwhBAfxK4eujYjVe9dfH3AInlse3bXdRFcos0hsn2fShvITsZdRo5-mqm4Zyk2gpHICR_A
+
+把获取到的Token复制到登录界面的Token输入框中:
+在这里插入图片描述
+成功登陆dashboard:
+在这里插入图片描述
+loadbalacer方式
+
+首先需要部署metallb负载均衡器，部署参考：
+https://blog.csdn.net/networken/article/details/85928369
+修改kubernetes-dashboard.yaml文件，最后service部分改为type: LoadBalancer即可：
+
+[centos@k8s-master ~]$ vim kubernetes-dashboard.yaml 
+......
+---
+# ------------------- Dashboard Service ------------------- #
+
+kind: Service
+apiVersion: v1
+metadata:
+  labels:
+    k8s-app: kubernetes-dashboard
+  name: kubernetes-dashboard
+  namespace: kube-system
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 443
+      targetPort: 8443
+  selector:
+    k8s-app: kubernetes-dashboard
+
+重新应用yaml文件
+
+kubectl apply -f kubernetes-dashboard.yaml --force
+
+    1
+
+注意由nodeport改为其他类型需要添加–forece才能执行成功。
+
+查看service，TYPE类型已经变为LoadBalancer，并且分配了EXTERNAL-IP：
+
+[centos@k8s-master ~]$ kubectl get service kubernetes-dashboard -n kube-system 
+NAME                   TYPE           CLUSTER-IP       EXTERNAL-IP      PORT(S)         AGE
+kubernetes-dashboard   LoadBalancer   10.107.160.197   192.168.92.202   443:32471/TCP   10m
+[centos@k8s-master ~]$ 
+
+浏览器输入https://192.168.92.202访问，填写之前申请的token进行登录：
+在这里插入图片描述
+登录成功：
+在这里插入图片描述
+nginx-ingress方式
+
+部署nginx-ingress-controller
+
+$ wget https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/deploy/mandatory.yaml
+$ kubectl apply -f mandatory.yaml
+
+
+详细部署参考：https://blog.csdn.net/networken/article/details/85881558
+创建Dashboard TLS证书
+
+$ mkdir -p /usr/local/src/kubernetes/certs
+$ cd /usr/local/src/kubernetes
+$ openssl genrsa -des3 -passout pass:x -out certs/dashboard.pass.key 2048
+$ openssl rsa -passin pass:x -in certs/dashboard.pass.key -out certs/dashboard.key
+$ openssl req -new -key certs/dashboard.key -out certs/dashboard.csr -subj '/CN=kube-dashboard'
+$ openssl x509 -req -sha256 -days 365 -in certs/dashboard.csr -signkey certs/dashboard.key -out certs/dashboard.crt
+$ rm certs/dashboard.pass.key
+$ kubectl create secret generic kubernetes-dashboard-certs --from-file=certs -n kube-system
+
+创建ingress规则
+
+文件末尾添加tls配置项即可。
+
+[centos@k8s-master ~]$ vim kubernetes-dashboard-ingress.yaml 
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  labels:
+    k8s-app: kubernetes-dashboard
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    # https://github.com/kubernetes/ingress-nginx/blob/master/docs/user-guide/nginx-configuration/annotations.md
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+  name: kubernetes-dashboard
+  namespace: kube-system
+spec:
+  rules:
+  - host: dashboard.host.com
+    http:
+      paths:
+      - path: /
+        backend:
+          servicePort: 443
+          serviceName: kubernetes-dashboard
+  tls:
+  - hosts:
+    - dashboard.host.com
+    secretName: kubernetes-dashboard-certs
+
+    
+
+
+查看创建的ingress:
+
+[centos@k8s-master ~]$ kubectl get ingress -n kube-system 
+NAME                   HOSTS                ADDRESS   PORTS     AGE
+kubernetes-dashboard   dashboard.host.com             80, 443   30h
+[centos@k8s-master ~]$ 
+
+
+
+暴露nginx-ingress-controller服务
+要想暴露内部流量，需要让 Ingress Controller 自身能够对外提供服务，主要有以下几种方式：
+ hostport
+ nodeport
+ loadbalacer
+hostport方式
+修改nginx-ingress-controller yaml配置文件，将Ingress Controller 改为 DeamonSet 方式部署（注释replicas），在每个节点运行一个nginx-ingress-controller的pod，然后在containers.ports部分做主机端口映射，添加 hostPort: 80和 hostPort: 443
+
+[centos@k8s-master ~]$ vim mandatory.yaml 
+......
+---
 
 apiVersion: extensions/v1beta1
-kind: Deployment
+kind: DaemonSet   #改为DaemonSet
 metadata:
-# Keep the name in sync with image version and
-# gce/coreos/kube-manifests/addons/dashboard counterparts
-  name: kubernetes-dashboard-latest
+  name: nginx-ingress-controller
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+#  replicas: 1    #注释掉replicas
+......
+          ports:
+            - name: http
+              containerPort: 80
+              hostPort: 80
+            - name: https
+              containerPort: 443
+              hostPort: 443
+......
+
+    
+
+
+更新yaml配置文件：
+
+kubectl apply -f mandatory.yaml
+
+    1
+
+查看运行的pod：
+
+[centos@k8s-master ~]$ kubectl get  pod -n ingress-nginx  -o wide
+NAME                             READY   STATUS    RESTARTS   AGE   IP             NODE         NOMINATED NODE   READINESS GATES
+nginx-ingress-controller-bhccq   1/1     Running   0          18s   10.244.2.102   k8s-node2    <none>           <none>
+nginx-ingress-controller-fssbt   1/1     Running   0          18s   10.244.0.55    k8s-master   <none>           <none>
+nginx-ingress-controller-z7xsf   1/1     Running   0          18s   10.244.1.101   k8s-node1    <none>           <none>
+[centos@k8s-master ~]$ 
+
+   
+
+
+修改dashboard yaml文件配置
+在deployment.containers部分增加args配置，在service部分改回默认即可：
+
+[centos@k8s-master ~]$ vim kubernetes-dashboard.yaml 
+......
+---
+# ------------------- Dashboard Deployment ------------------- #
+
+kind: Deployment
+apiVersion: apps/v1beta2
+metadata:
+  labels:
+    k8s-app: kubernetes-dashboard
+  name: kubernetes-dashboard
   namespace: kube-system
 spec:
   replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      k8s-app: kubernetes-dashboard
   template:
     metadata:
       labels:
         k8s-app: kubernetes-dashboard
-        version: latest
-        kubernetes.io/cluster-service: "true"
     spec:
       containers:
       - name: kubernetes-dashboard
-        image: gcr.io/google_containers/kubernetes-dashboard-amd64:v1.5.1
-        resources:
-          # keep request = limit to keep this container in guaranteed class
-          limits:
-            cpu: 100m
-            memory: 50Mi
-          requests:
-            cpu: 100m
-            memory: 50Mi
+        #image: k8s.gcr.io/kubernetes-dashboard-amd64:v1.10.1
+        image: registry.cn-hangzhou.aliyuncs.com/google_containers/kubernetes-dashboard-amd64:v1.10.1
         ports:
-        - containerPort: 9090
+        - containerPort: 8443
+          protocol: TCP
         args:
-         -  --apiserver-host=http://192.168.72.129:8080
-        livenessProbe:
-          httpGet:
-            path: /
-            port: 9090
-          initialDelaySeconds: 30
-          timeoutSeconds: 30
+          - --tls-key-file=dashboard.key
+          - --tls-cert-file=dashboard.crt
+          #- --auto-generate-certificates
+          # Uncomment the following line to manually specify Kubernetes API server Host
+          # If not specified, Dashboard will attempt to auto discover the API server and connect
+          # to it. Uncomment only if the default does not work.
+          # - --apiserver-host=http://my-address:port
+        volumeMounts:
+......
+---
+# ------------------- Dashboard Service ------------------- #
 
-　　编辑dashboardsvc.yaml文件：
+kind: Service
+apiVersion: v1
+metadata:
+  labels:
+    k8s-app: kubernetes-dashboard
+  name: kubernetes-dashboard
+  namespace: kube-system
+spec:
+  ports:
+    - port: 443
+      targetPort: 8443
+  selector:
+    k8s-app: kubernetes-dashboard
 
+   
+
+最后应用变更：
+
+kubectl apply -f kubernetes-dashboard.yaml --force
+
+    1
+
+查看dashboard service:
+
+[centos@k8s-master ~]$ kubectl get service -n kube-system 
+NAME                   TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)         AGE
+......
+kubernetes-dashboard   ClusterIP   10.96.55.60   <none>        443/TCP         30h
+[centos@k8s-master ~]$ 
+
+    1
+    2
+    3
+    4
+    5
+
+集群外部节点配置DNS解析:
+
+192.168.92.56 dashboard.host.com
+192.168.92.57 dashboard.host.com
+192.168.92.58 dashboard.host.com
+
+    1
+    2
+    3
+
+集群外部直接访问：https://dashboard.host.com
+填入之前申请的token，访问成功：
+在这里插入图片描述
+NodePort方式
+修改nginx-ingress-controller配置文件mandatory.yaml，删除containers.ports部分做的主机端口映射，hostPort: 80和 hostPort: 443
+并为nginx-ingress-controller创建NodePort类型的service,通过nodeip+port方式对外提供服务：
+
+$ wget https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/deploy/provider/baremetal/service-nodeport.yaml
+$ kubectl apply -f service-nodeport.yaml
+
+    1
+    2
+
+直接执行yaml文件即可，可以看到创建了nginx-ingress-controller的NodePort类型service:
+
+[centos@k8s-master ~]$ kubectl get service -n ingress-nginx 
+NAME            TYPE       CLUSTER-IP    EXTERNAL-IP   PORT(S)                      AGE
+ingress-nginx   NodePort   10.100.30.8   <none>        80:32142/TCP,443:32179/TCP   29h
+[centos@k8s-master ~]$ 
+
+    1
+    2
+    3
+    4
+
+集群外主机hosts配置文件不变
+
+192.168.92.56 dashboard.host.com
+192.168.92.57 dashboard.host.com
+192.168.92.58 dashboard.host.com
+
+    1
+    2
+    3
+
+选择token方式，通过域名+port方式访问：https://dashboard.host.com:32179
+在这里插入图片描述
+loadbalancer方式
+首先需要部署loadbalancer，参考这里：
+https://blog.csdn.net/networken/article/details/85928369
+然后修改nginx ingress controller的service类型为type: LoadBalancer即可：
+
+[centos@k8s-master ~]$ vim service-nodeport.yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: kubernetes-dashboard
-  namespace: kube-system
+  name: ingress-nginx
+  namespace: ingress-nginx
   labels:
-    k8s-app: kubernetes-dashboard
-    kubernetes.io/cluster-service: "true"
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
 spec:
-  selector:
-    k8s-app: kubernetes-dashboard
+  type: LoadBalancer
   ports:
-  - port: 80
-    targetPort: 9090
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+    - name: https
+      port: 443
+      targetPort: 443
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
 
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    10
+    11
+    12
+    13
+    14
+    15
+    16
+    17
+    18
+    19
+    20
+    21
+    22
+    23
 
- 
-2、镜像准备
+更新yaml文件：
 
-　　在dashboard.yaml中定义了dashboard所用的镜像：gcr.io/google_containers/kubernetes-dashboard-amd64:v1.5.1（当然你可以选择其他的版本），另外，启动k8s的pod还需要一个额外的镜像：registry.access.redhat.com/rhel7/pod-infrastructure:latest（node中，/etc/kubernetes/kubelet的配置），由于一些众所周知的原因，这两个镜像在国内是下载不下来的，以下介绍如何准备这两个镜像。
-2.1 国外下载，国内导入
+kubectl apply -f service-nodeport.yaml --force
 
-　　从海外的服务器上pull下来对应的镜像，之后通过docker save保存成tar包，将tar包传回国内，在每个node上执行docker load将镜像导入。类似的命令如下：
+    1
 
+查看service 类型以及获取到的EXTERNAL-IP
 
-海外服务器执行：
-docker save gcr.io/google_containers/kubernetes-dashboard-amd64:v1.5.1 > dashboard.tar
-docker save registry.access.redhat.com/rhel7/pod-infrastructure:latest > podinfrastructure.tar
-scp *.tar root@你国内的外网IP:/home/tar
-各个node上执行：
-docker load < dashboard.tar
-docker load < podinfrastructure.tar
+[centos@k8s-master ~]$ kubectl get svc -n ingress-nginx 
+NAME            TYPE           CLUSTER-IP       EXTERNAL-IP      PORT(S)                      AGE
+ingress-nginx   LoadBalancer   10.111.158.158   192.168.92.200   80:32629/TCP,443:30118/TCP   20s
+[centos@k8s-master ~]$ 
 
+    1
+    2
+    3
+    4
 
-2.2 搭梯子
+修改集群外主机hosts配置文件,配置下面一条即可
 
-　　在node所在同网段（相同交换机）内，搭建一个可以正常访问google、Facebook等网站的fq网关，将集群中所有机器的GATEWAY指向该地址，之后重启网络。这样，所有的机器就能够正常下载这两个镜像了。
- 
-3、启动
+192.168.92.200 dashboard.host.com
 
-　　在master执行如下命令：
+    1
 
-kubectl create -f dashboard.yaml
+通过token方式浏览器访问：https://dashboard.host.com
+在这里插入图片描述
+API Server方式
 
-kubectl create -f dashboardsvc.yaml
+如果Kubernetes API服务器是公开的，并可以从外部访问，那我们可以直接使用API Server的方式来访问，也是比较推荐的方式。
+Dashboard的访问地址为：
 
-　　之后，dashboard搭建完成。
- 
-4、验证
+https://<master-ip>:<apiserver-port>/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
 
-　　命令验证，master上执行如下命令：
+    1
 
+但是浏览器返回的结果可能如下：
 
-[root@k8s-master ~]# kubectl get deployment --all-namespaces
-NAMESPACE NAME DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
-kube-system kubernetes-dashboard-latest 1  1         1            1           1h
-[root@k8s-master ~]# kubectl get svc  --all-namespaces
-NAMESPACE   NAME          CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
-default       kubernetes             10.254.0.1      <none>        443/TCP   9d
-kube-system   kubernetes-dashboard   10.254.44.119   <none>        80/TCP    1h
-[root@k8s-master ~]# kubectl get pod  -o wide  --all-namespaces
-NAMESPACE  NAME  READY     STATUS    RESTARTS     AGE   IP  NODE
-kube-system kubernetes-dashboard-latest-3866786896-vsf3h 1/1 Running 0 1h 10.0.82.2 k8s-node-1
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {
+    
+  },
+  "status": "Failure",
+  "message": "services \"https:kubernetes-dashboard:\" is forbidden: User \"system:anonymous\" cannot get resource \"services/proxy\" in API group \"\" in the namespace \"kube-system\"",
+  "reason": "Forbidden",
+  "details": {
+    "name": "https:kubernetes-dashboard:",
+    "kind": "services"
+  },
+  "code": 403
+}
 
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    10
+    11
+    12
+    13
+    14
+    15
 
+这是因为最新版的k8s默认启用了RBAC，并为未认证用户赋予了一个默认的身份：anonymous。
+对于API Server来说，它是使用证书进行认证的，我们需要先创建一个证书：
+我们使用client-certificate-data和client-key-data生成一个p12文件，可使用下列命令：
 
-　　界面验证，浏览器访问：http://192.168.72.129:8080/ui
+# 生成client-certificate-data
+grep 'client-certificate-data' ~/.kube/config | head -n 1 | awk '{print $2}' | base64 -d >> kubecfg.crt
+# 生成client-key-data
+grep 'client-key-data' ~/.kube/config | head -n 1 | awk '{print $2}' | base64 -d >> kubecfg.key
+# 生成p12
+openssl pkcs12 -export -clcerts -inkey kubecfg.key -in kubecfg.crt -out kubecfg.p12 -name "kubernetes-client"
+[centos@k8s-master ~]$ ll
+-rw-rw-r--  1 centos centos     1082 Dec 28 19:41 kubecfg.crt
+-rw-rw-r--  1 centos centos     1675 Dec 28 19:41 kubecfg.key
+-rw-rw-r--  1 centos centos     2464 Dec 28 19:41 kubecfg.p12
+
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+    8
+    9
+    10
+
+最后导入上面生成的p12文件，重新打开浏览器，显示如下：
+在这里插入图片描述
+点击确定，便可以看到熟悉的登录界面了：
+我们可以使用一开始创建的admin-user用户的token进行登录，一切OK。
+https://192.168.92.56:6443/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
+在这里插入图片描述
+Porxy方式
+
+如果要在本地访问dashboard，可运行如下命令：
+
+[centos@k8s-master efk]$ kubectl proxy 
+Starting to serve on 127.0.0.1:8001
+
+    1
+    2
+
+现在就可以通过以下链接来访问Dashborad UI
+
+http://localhost:8001/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
+
+    1
+
+这种方式默认情况下，只能从本地访问（启动它的机器）。
+我们也可以使用–address和–accept-hosts参数来允许外部访问：
+
+[centos@k8s-master efk]$ kubectl proxy --address='0.0.0.0'  --accept-hosts='^*$'
+Starting to serve on [::]:8001
+
+    1
+    2
+
+然后我们在外网访问以下链接：
+
+http://<master-ip>:8001/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/
+
+    1
+
+可以成功访问到登录界面，但是填入token也无法登录，这是因为Dashboard只允许localhost和127.0.0.1使用HTTP连接进行访问，而其它地址只允许使用HTTPS。因此，如果需要在非本机访问Dashboard的话，只能选择其他访问方式。
+使用Dashboard
+
+Dashboard 界面结构分为三个大的区域。
+
+    顶部操作区，在这里用户可以搜索集群中的资源、创建资源或退出。
+    左边导航菜单，通过导航菜单可以查看和管理集群中的各种资源。菜单项按照资源的层级分为两类：Cluster 级别的资源 ，Namespace 级别的资源 ，默认显示的是 default Namespace，可以进行切换：
+    中间主体区，在导航菜单中点击了某类资源，中间主体区就会显示该资源所有实例，比如点击 Pods。
