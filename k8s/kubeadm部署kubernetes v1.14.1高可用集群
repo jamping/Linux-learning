@@ -98,9 +98,15 @@ EOF
 
  # 开启firewalld防火墙并允许所有流量
 
-systemctl start firewalld && systemctl enable firewalld 
-firewall-cmd --set-default-zone=trusted 
-firewall-cmd --complete-reload 
+systemctl start firewalld && systemctl enable firewalld
+firewall-cmd --set-default-zone=trusted
+firewall-cmd --complete-reload
+或
+master
+firewall-cmd --zone=public --add-port={2379/tcp,2380/tcp,6443/tcp,6444/tcp,8472/udp,10250/tcp} --permanent && firewall-cmd --reload
+
+Node
+firewall-cmd --zone=public --add-port=8472/udp --permanent && firewall-cmd --reload
 
 # 关闭selinux 
 
@@ -318,6 +324,10 @@ scp start-haproxy.sh start-keepalived.sh 192.168.72.142:/data/lb/
 sh start-haproxy.sh
 sh start-keepalived.sh
 
+防火墙开启keepalived使用组播功能，执行一下命令：
+firewall-cmd --direct --permanent --add-rule ipv4 filter INPUT 0 --in-interface ens33 --destination 224.0.0.18 --protocol vrrp -j ACCEPT;
+firewall-cmd --reload;
+
 验证HA状态
 
 查看容器运行状态
@@ -399,7 +409,7 @@ bootstrapTokens:
   - authentication
 kind: InitConfiguration
 localAPIEndpoint:
-  advertiseAddress: 1.2.3.4
+  advertiseAddress: 192.168.72.132
   bindPort: 6443
 nodeRegistration:
   criSocket: /var/run/dockershim.sock
@@ -422,56 +432,7 @@ etcd:
     dataDir: /var/lib/etcd
 imageRepository: registry.aliyuncs.com/google_containers
 kind: ClusterConfiguration
-kubernetesVersion: v1.14.0
-networking:
-  dnsDomain: cluster.local
-  podSubnet: "10.244.0.0/16"
-  serviceSubnet: 10.96.0.0/12
-scheduler: {}
-
----
-apiVersion: kubeproxy.config.k8s.io/v1alpha1
-kind: KubeProxyConfiguration
-featureGates:
-  SupportIPVSProxyMode: true
-mode: ipvs
-"kubeadm-config.yaml" 47L, 1065C written
-[root@k8s-master1 ~]# cat kubeadm-config.yaml 
-apiVersion: kubeadm.k8s.io/v1beta1
-bootstrapTokens:
-- groups:
-  - system:bootstrappers:kubeadm:default-node-token
-  token: abcdef.0123456789abcdef
-  ttl: 24h0m0s
-  usages:
-  - signing
-  - authentication
-kind: InitConfiguration
-localAPIEndpoint:
-  advertiseAddress: 1.2.3.4
-  bindPort: 6443
-nodeRegistration:
-  criSocket: /var/run/dockershim.sock
-  name: k8s-master1
-  taints:
-  - effect: NoSchedule
-    key: node-role.kubernetes.io/master
----
-apiServer:
-  timeoutForControlPlane: 4m0s
-apiVersion: kubeadm.k8s.io/v1beta1
-certificatesDir: /etc/kubernetes/pki
-clusterName: kubernetes
-controlPlaneEndpoint: "192.168.72.30:6444"
-controllerManager: {}
-dns:
-  type: CoreDNS
-etcd:
-  local:
-    dataDir: /var/lib/etcd
-imageRepository: registry.aliyuncs.com/google_containers
-kind: ClusterConfiguration
-kubernetesVersion: v1.14.0
+kubernetesVersion: v1.14.1
 networking:
   dnsDomain: cluster.local
   podSubnet: "10.244.0.0/16"
@@ -574,3 +535,65 @@ https://docs.projectcalico.org/v3.6/getting-started/kubernetes/installation/host
 加入master节点
 
 从初始化输出或kubeadm-init.log中获取命令
+
+You can now join any number of the control-plane node running the following command on each as root:
+
+  kubeadm join 192.168.72.30:6444 --token abcdef.0123456789abcdef \
+    --discovery-token-ca-cert-hash sha256:46914b29a3413e9d30e7e86b8c27f31824bd4d584add825d13175bb8c65cfbe0 \
+    --experimental-control-plane --certificate-key c7e5c095a6079d02f9ecc9ebce2e444736d860fbd3397b546b05c338cb5932dd
+
+Please note that the certificate-key gives access to cluster sensitive data, keep it secret!
+As a safeguard, uploaded-certs will be deleted in two hours; If necessary, you can use 
+"kubeadm init phase upload-certs --experimental-upload-certs" to reload certs afterward.
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 192.168.72.30:6444 --token abcdef.0123456789abcdef \
+    --discovery-token-ca-cert-hash sha256:46914b29a3413e9d30e7e86b8c27f31824bd4d584add825d13175bb8c65cfbe0 
+
+查看nodes运行情况
+kubectl get nodes -o wide
+
+查看pod和service状态
+kubectl -n kube-system get pod -o wide
+kubectl -n kube-system get svc
+
+验证IPVS
+
+查看kube-proxy日志，第一行输出Using ipvs Proxier.
+
+kubectl -n kube-system logs -f kube-proxy-4vwbb
+ipvsadm -ln
+
+etcd集群
+
+执行以下命令查看etcd集群状态
+
+kubectl -n kube-system exec etcd-k8s-master1 -- etcdctl \
+ --endpoints=https://192.168.72.141:2379 \
+ --ca-file=/etc/kubernetes/pki/etcd/ca.crt \
+ --cert-file=/etc/kubernetes/pki/etcd/server.crt \
+ --key-file=/etc/kubernetes/pki/etcd/server.key cluster-health
+
+验证HA
+
+在master1上执行关机操作，建议提前在其他节点配置kubectl命令支持。
+
+[root@k8s-master1 ~]# shutdown -h now
+
+在任意运行节点验证集群状态，master1节点NotReady，集群可正常访问：
+
+[root@k8s-master2 ~]# kubectl get nodes
+NAME           STATUS     ROLES    AGE     VERSION
+k8s-master1   NotReady   master   19m     v1.14.1
+k8s-master2   Ready      master   11m     v1.14.1
+k8s-master3   Ready      master   10m     v1.14.1
+k8s-node1     Ready      <none>   9m21s   v1.14.1
+
+查看网卡，vip自动漂移到master3节点
+
+[root@k8s-master3 ~]# ip a |grep ens33
+2: ens33: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000
+    inet 192.168.72.142/24 brd 192.168.72.255 scope global noprefixroute ens33
+    inet 192.168.72.30/24 scope global secondary ens33
+
