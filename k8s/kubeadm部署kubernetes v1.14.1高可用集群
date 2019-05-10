@@ -136,7 +136,9 @@ sed -i 's/^SELINUX=enforcing$/SELINUX=disabled/' /etc/selinux/config && setenfor
 
 #关闭swap 
 
-swapoff -a yes | cp /etc/fstab /etc/fstab_bak cat /etc/fstab_bak | grep -v swap > /etc/fstab
+swapoff -a 
+yes | cp /etc/fstab /etc/fstab_bak
+cat /etc/fstab_bak | grep -v swap > /etc/fstab
 
 配置时间同步
 使用chrony同步时间，centos7默认已安装，这里修改时钟源，所有节点与网络时钟源同步：

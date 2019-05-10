@@ -1,0 +1,47 @@
+deploy节点设置防火墙
+关闭selinux并放开firewalld，请勿禁用firewalld服务，保证firewalld服务正常运行状态即可。
+
+setenforce 0
+sed  --follow-symlinks  -i  "s/SELINUX=enforcing/SELINUX=disabled/g"  /etc/selinux/config 
+firewall-cmd  --set-default-zone=trusted
+firewall-cmd  --complete-reload
+
+部署节点环境准备（deploy/192.168.92.10）
+
+以下所有操作在部署节点执行
+安装 docker-compose
+
+curl -L "https://github.com/docker/compose/releases/download/1.23.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
+curl -sSL https://raw.githubusercontent.com/willzhang/shell/master/install_docker.sh | sh
+
+下载用于部署某个Kubernetes版本的docker-compose文件并使部署程序运行起来，例如此次实验针对刚刚发布的 K8S v1.14.1。
+
+curl -L https://raw.githubusercontent.com/wise2c-devops/breeze/v1.14.1/docker-compose.yml -o docker-compose.yml
+
+docker-compose up -d
+
+
+查看拉取的镜像
+
+[root@deploy ~]# docker images
+
+
+在部署机上做好对集群内其它所有服务器的ssh免密登录，命令为：
+
+  (1) 生成秘钥 ssh-keygen -t rsa
+
+(2) 针对目标服务器做ssh免密登录
+
+   ssh-copy-id 192.168.9.11
+   
+   ssh-copy-id 192.168.9.12
+   
+   ssh-copy-id 192.168.9.13
+
+   ssh-copy-id 192.168.9.20
+
+   ssh-copy-id 192.168.9.21
+
+   
