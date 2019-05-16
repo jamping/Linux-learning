@@ -9,6 +9,12 @@ cd /etc/pik/CA
 3) generate the public key of CA
 openssl req -new -x509 -key private/cakey.pem -out cacert.pem -days 3650
 
+-new：表示生成一个新证书签署请求
+-x509：专用于CA生成自签证书，如果不是自签证书则不需要此项
+-key：生成请求时用到的私钥文件
+-out：证书的保存路径
+-days：证书的有效期限，单位是day（天），默认是365天
+
 4) create database and serial file 
 touch serial index.txt
 echo "01" > serial
@@ -17,13 +23,17 @@ echo "01" > serial
 openssl x509 -noout -text -in /etc/pki/CA/cacert.pem
 
 6) get certs of openldap 
+第一步：在需要使用证书的主机上生成私钥，这个私钥文件的位置可以随意定
 cd /etc/openldap/ssl
 (umask 077; openssl genrsa -out ldapkey.pem 1024)
 
 7) request to CA
+第二步：生成证书签署请求
 openssl req -new -key ldapkey.pem -out ldap.csr -days 3650
+第三步：将请求通过可靠方式发送给 CA 主机
 
 8) CA verify and sign the cert
+第四步：CA 服务器拿到证书签署请求文件后颁发证书，这一步是在 CA 服务器上做的
 openssl ca -in ldap.csr -out ldapcert.pem -days 3650
 
 

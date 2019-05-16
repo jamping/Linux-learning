@@ -34,14 +34,15 @@ docker-compose up -d
 
 (2) 针对目标服务器做ssh免密登录
 
-   ssh-copy-id 192.168.9.11
+   ssh-copy-id 192.168.72.145
    
-   ssh-copy-id 192.168.9.12
+   ssh-copy-id 192.168.72.146
    
-   ssh-copy-id 192.168.9.13
+   ssh-copy-id 192.168.72.147
 
-   ssh-copy-id 192.168.9.20
+   ssh-copy-id 192.168.72.148
 
-   ssh-copy-id 192.168.9.21
+   ssh-copy-id 192.168.72.149
+   ssh-copy-id 192.168.72.150
+   ssh-copy-id 192.168.72.151
 
-   
